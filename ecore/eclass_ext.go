@@ -237,11 +237,16 @@ func (eClass *EClassExt) initECrossReferenceFeatures() {
 
 func (eClass *EClassExt) initFeaturesSubSet() {
 	eClass.initEAllStructuralFeatures()
+	// ALL structural features, own and inherited: the subsets driving EContents and
+	// EContentAdapter must include inherited references, or a class inheriting a
+	// containment appears as a leaf and its children are skipped. Captured before the
+	// lock, since the getter would re-enter it.
+	allFeatures := eClass.GetEAllStructuralFeatures()
 	eClass.mutex.Lock()
 	if eClass.eContainmentFeatures == nil {
 		containments := []any{}
 		crossReferences := []any{}
-		for itFeature := eClass.GetEStructuralFeatures().Iterator(); itFeature.HasNext(); {
+		for itFeature := allFeatures.Iterator(); itFeature.HasNext(); {
 			ref, isRef := itFeature.Next().(EReference)
 			if isRef {
 				if ref.IsContainment() {

@@ -294,6 +294,30 @@ func TestEClassContainments(t *testing.T) {
 	assert.Equal(t, []any{eReference0, eReference2}, eClass.GetECrossReferenceFeatures().ToArray())
 }
 
+// The containment / cross-reference feature subsets (used by EContents,
+// EAllContents and EContentAdapter) must include references INHERITED from
+// supertypes, not only the class's own features.
+func TestEClassContainmentsInherited(t *testing.T) {
+	eClass := newEClassExt()
+	eSuperClass := newEClassExt()
+	eClass.GetESuperTypes().Add(eSuperClass)
+
+	superContainment := newEReferenceExt()
+	superContainment.SetContainment(true)
+	superCross := newEReferenceExt()
+	ownContainment := newEReferenceExt()
+	ownContainment.SetContainment(true)
+	ownCross := newEReferenceExt()
+
+	eSuperClass.GetEStructuralFeatures().Add(superContainment)
+	eSuperClass.GetEStructuralFeatures().Add(superCross)
+	eClass.GetEStructuralFeatures().Add(ownContainment)
+	eClass.GetEStructuralFeatures().Add(ownCross)
+
+	assert.Equal(t, []any{superContainment, ownContainment}, eClass.GetEContainmentFeatures().ToArray())
+	assert.Equal(t, []any{superCross, ownCross}, eClass.GetECrossReferenceFeatures().ToArray())
+}
+
 func TestEClassIsSuperTypeOf(t *testing.T) {
 	eClass := newEClassExt()
 	eOther := newEClassExt()
