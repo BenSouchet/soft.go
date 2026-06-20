@@ -237,11 +237,18 @@ func (eClass *EClassExt) initECrossReferenceFeatures() {
 
 func (eClass *EClassExt) initFeaturesSubSet() {
 	eClass.initEAllStructuralFeatures()
+	// Iterate ALL structural features (own + inherited): the containment and
+	// cross-reference feature subsets that drive EContents/EAllContents/
+	// EContentAdapter must include references inherited from supertypes, otherwise
+	// a class that inherits a containment (e.g. a type extending a capacities base)
+	// appears as a leaf and its children are silently skipped. Captured before the
+	// lock to avoid re-entrant locking via the getter.
+	allFeatures := eClass.GetEAllStructuralFeatures()
 	eClass.mutex.Lock()
 	if eClass.eContainmentFeatures == nil {
 		containments := []any{}
 		crossReferences := []any{}
-		for itFeature := eClass.GetEStructuralFeatures().Iterator(); itFeature.HasNext(); {
+		for itFeature := allFeatures.Iterator(); itFeature.HasNext(); {
 			ref, isRef := itFeature.Next().(EReference)
 			if isRef {
 				if ref.IsContainment() {
