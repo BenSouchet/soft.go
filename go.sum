@@ -1,5 +1,3 @@
-github.com/KarpelesLab/weak v0.1.1 h1:fNnlPo3aypS9tBzoEQluY13XyUfd/eWaSE/vMvo9s4g=
-github.com/KarpelesLab/weak v0.1.1/go.mod h1:pzXsWs5f2bf+fpgHayTlBE1qJpO3MpJKo5sRaLu1XNw=
 github.com/SokaDance/rmx v1.0.1 h1:3fUtbebWfImnyzyFt/CHyxt5xje5eMDBmxMDqU66Mvw=
 github.com/SokaDance/rmx v1.0.1/go.mod h1:9pSmidyq6w9CQCj1yPEWPOgQgxeyE7qB6rmIVCmWFGk=
 github.com/chebyrash/promise v0.0.0-20230709133807-42ec49ba1459 h1:s7UrE2T8jRoriLIddT8fW5+Wf2sXcOgfteXUKD74SaU=
