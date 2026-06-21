@@ -13,8 +13,8 @@ import (
 	"net/url"
 	"path/filepath"
 	"strings"
-
-	"github.com/KarpelesLab/weak"
+	"sync"
+	"weak"
 )
 
 type URIBuilder struct {
@@ -130,12 +130,48 @@ const (
 	fragmentComponent
 )
 
-var uriCache *weak.Map[string, URI]
+// uriCacheMap interns parsed URIs so identical raw strings share one *URI.
+// It is backed by the standard library weak package: an entry whose *URI is no
+// longer referenced anywhere is collectable, and the next lookup simply reparses
+// (and drops the dead entry). All access is mutex-guarded so concurrent parsing
+// — e.g. a parallel multi-file load — is safe.
+type uriCacheMap struct {
+	mu sync.RWMutex
+	m  map[string]weak.Pointer[URI]
+}
 
-func getURICache() *weak.Map[string, URI] {
-	if uriCache == nil {
-		uriCache = weak.NewMap[string, URI]()
+func (c *uriCacheMap) Get(raw string) *URI {
+	c.mu.RLock()
+	p, ok := c.m[raw]
+	c.mu.RUnlock()
+	if !ok {
+		return nil
 	}
+	if u := p.Value(); u != nil {
+		return u
+	}
+	// The interned URI was collected; drop the stale entry (only if unchanged).
+	c.mu.Lock()
+	if cur, ok := c.m[raw]; ok && cur == p {
+		delete(c.m, raw)
+	}
+	c.mu.Unlock()
+	return nil
+}
+
+func (c *uriCacheMap) Set(raw string, u *URI) {
+	c.mu.Lock()
+	c.m[raw] = weak.Make(u)
+	c.mu.Unlock()
+}
+
+var (
+	uriCacheOnce sync.Once
+	uriCache     *uriCacheMap
+)
+
+func getURICache() *uriCacheMap {
+	uriCacheOnce.Do(func() { uriCache = &uriCacheMap{m: map[string]weak.Pointer[URI]{}} })
 	return uriCache
 }
 
