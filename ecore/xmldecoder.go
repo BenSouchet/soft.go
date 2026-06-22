@@ -435,10 +435,17 @@ func (l *XMLDecoder) handleFeature(space string, local string) {
 				}
 			}
 		} else {
+			// Unknown element: push a nil-object placeholder so this element and its
+			// whole subtree pop balanced in endElement; otherwise the matching pop
+			// would remove a real ancestor object and silently drop later siblings.
+			l.types = append(l.types, load_error_type)
+			l.objects = append(l.objects, nil)
 			l.handleUnknownFeature(local)
 		}
 	} else {
+		// Already inside an unknown (placeholder) subtree: keep it balanced.
 		l.types = append(l.types, load_error_type)
+		l.objects = append(l.objects, nil)
 		l.handleUnknownFeature(local)
 	}
 
