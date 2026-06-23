@@ -246,6 +246,12 @@ func (s *XMLEncoder) saveFeatures(eObject EObject, attributesOnly bool) bool {
 			case xsfkDataTypeSingle:
 				s.saveDataTypeSingle(eObject, eFeature)
 				continue
+			case xsfkObjectAttributeSingle:
+				s.saveEObjectSingle(eObject, eFeature)
+				continue
+			case xsfkObjectAttributeMany:
+				s.saveEObjectMany(eObject, eFeature)
+				continue
 			case xsfkDataTypeSingleNillable:
 				if !s.isNil(eObject, eFeature) {
 					s.saveDataTypeSingle(eObject, eFeature)
@@ -394,7 +400,6 @@ func (s *XMLEncoder) saveManyEmpty(_ EObject, eFeature EStructuralFeature) {
 	s.str.addAttribute(s.getFeatureQName(eFeature), "")
 }
 
-//lint:ignore U1000 func (*XMLEncoder).saveEObjectSingle is unused
 func (s *XMLEncoder) saveEObjectSingle(eObject EObject, eFeature EStructuralFeature) {
 	value, _ := eObject.EGetResolve(eFeature, false).(EObject)
 	if value != nil {
@@ -403,7 +408,6 @@ func (s *XMLEncoder) saveEObjectSingle(eObject EObject, eFeature EStructuralFeat
 	}
 }
 
-//lint:ignore U1000 func (*XMLEncoder).saveEObjectMany is unused
 func (s *XMLEncoder) saveEObjectMany(eObject EObject, eFeature EStructuralFeature) {
 	l := eObject.EGetResolve(eFeature, false).(EList)
 	failure := false
@@ -586,6 +590,19 @@ func (s *XMLEncoder) getSaveFeatureKind(f EStructuralFeature) xmlSaveFeatureKind
 		opposite := r.GetEOpposite()
 		if opposite != nil && opposite.IsContainment() {
 			return xsfkTransient
+		}
+		// A reference whose ExtendedMetaData declares kind="attribute" is an
+		// IDREF-style attribute in the XSD (e.g. `protection="Protections.xml#…"`),
+		// not a nested href element. The decoder already reads it from the
+		// attribute; serialize it back the same way (via saveEObject*, which emits
+		// the href as the attribute value) so it round-trips. Without this, such a
+		// cross-resource reference is written as a `<protection href=…/>` child the
+		// decoder cannot read back -> the reference is lost on reload.
+		if s.extendedMetaData != nil && s.extendedMetaData.GetFeatureKind(f) == "attribute" {
+			if isMany {
+				return xsfkObjectAttributeMany
+			}
+			return xsfkObjectAttributeSingle
 		}
 		if isMany {
 			if isUnsettable {
