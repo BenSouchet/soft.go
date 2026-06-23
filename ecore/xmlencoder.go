@@ -267,6 +267,7 @@ func (s *XMLEncoder) saveFeatures(eObject EObject, attributesOnly bool) bool {
 			case xsfkObjectContainSingleUnsettable:
 			case xsfkObjectContainSingle:
 			case xsfkObjectContainMany:
+			case xsfkDataTypeContentSingle:
 			case xsfkObjectHrefSingleUnsettable:
 				if !s.isNil(eObject, eFeature) {
 					switch s.getSaveResourceKindSingle(eObject, eFeature) {
@@ -344,6 +345,8 @@ func (s *XMLEncoder) saveFeatures(eObject EObject, attributesOnly bool) bool {
 			}
 		case xsfkObjectContainSingle:
 			s.saveContainedSingle(eObject, eFeature)
+		case xsfkDataTypeContentSingle:
+			s.saveDataTypeContent(eObject, eFeature)
 		case xsfkObjectContainManyUnsettable:
 			fallthrough
 		case xsfkObjectContainMany:
@@ -372,6 +375,17 @@ func (s *XMLEncoder) saveDataTypeSingle(eObject EObject, eFeature EStructuralFea
 	str, ok := s.getDataType(val, eFeature, true)
 	if ok {
 		s.str.addAttribute(s.getFeatureQName(eFeature), html.EscapeString(str))
+	}
+}
+
+// saveDataTypeContent writes a simple-content feature as the element's inline
+// text body (XSD simpleContent), e.g. <comments>en g/m3</comments>, rather than
+// an attribute. Counterpart of saveDataTypeSingle for kind="simple" features.
+func (s *XMLEncoder) saveDataTypeContent(eObject EObject, eFeature EStructuralFeature) {
+	val := eObject.EGetResolve(eFeature, false)
+	str, ok := s.getDataType(val, eFeature, true)
+	if ok {
+		s.str.addContentValue(html.EscapeString(str))
 	}
 }
 
@@ -622,6 +636,15 @@ func (s *XMLEncoder) getSaveFeatureKind(f EStructuralFeature) xmlSaveFeatureKind
 		d := f.GetEType().(EDataType)
 		if !d.IsSerializable() {
 			return xsfkTransient
+		}
+		// A feature whose ExtendedMetaData declares kind="simple" is the simple
+		// content of a complex type - it serializes as the element's inline text
+		// (e.g. <comments>en g/m3</comments>), not as an attribute. The decoder
+		// already reads simple content from the element text; emit it the same way
+		// so it round-trips (otherwise it is written as an attribute named after
+		// the EMD name, often the synthetic ":0", producing invalid XML).
+		if !isMany && s.extendedMetaData != nil && s.extendedMetaData.GetFeatureKind(f) == "simple" {
+			return xsfkDataTypeContentSingle
 		}
 		if isMany {
 			return xsfkDataTypeMany
