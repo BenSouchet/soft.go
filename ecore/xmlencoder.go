@@ -247,10 +247,26 @@ func (s *XMLEncoder) saveFeatures(eObject EObject, attributesOnly bool) bool {
 				s.saveDataTypeSingle(eObject, eFeature)
 				continue
 			case xsfkObjectAttributeSingle:
-				s.saveEObjectSingle(eObject, eFeature)
+				// kind="attribute" reference written as an attribute: a same-resource
+				// (or detached) target uses an intra-doc IDREF ("#frag"), a
+				// cross-resource target uses a full href ("File.xml#frag") - both as
+				// the attribute value. Mirrors the xsfkObjectHref dispatch so a
+				// boundary/detached ref (e.g. subset extraction) is an IDREF, never a
+				// dangling-HREF error.
+				switch s.getSaveResourceKindSingle(eObject, eFeature) {
+				case cross:
+					s.saveEObjectSingle(eObject, eFeature)
+				case same:
+					s.saveIDRefSingle(eObject, eFeature)
+				}
 				continue
 			case xsfkObjectAttributeMany:
-				s.saveEObjectMany(eObject, eFeature)
+				switch s.getSaveResourceKindMany(eObject, eFeature) {
+				case cross:
+					s.saveEObjectMany(eObject, eFeature)
+				case same:
+					s.saveIDRefMany(eObject, eFeature)
+				}
 				continue
 			case xsfkDataTypeSingleNillable:
 				if !s.isNil(eObject, eFeature) {
