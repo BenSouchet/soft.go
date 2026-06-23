@@ -20,6 +20,7 @@ type xmlString struct {
 	lineWidth          int
 	depth              int
 	lastElementIsStart bool
+	lastElementHasText bool
 }
 
 const MaxInt = int(^uint(0) >> 1)
@@ -85,6 +86,17 @@ func (s *xmlString) closeStartElement() {
 func (s *xmlString) endElement() {
 	if s.lastElementIsStart {
 		s.endEmptyElement()
+	} else if s.lastElementHasText {
+		// Simple-content element: text was written inline after the start tag, so
+		// the closing tag stays inline too (no indent/newline before it).
+		name := s.removeLast()
+		if name != "" {
+			s.add("</")
+			s.add(name)
+			s.add(">")
+			s.addLine()
+		}
+		s.lastElementHasText = false
 	} else {
 		name := s.removeLast()
 		if name != "" {
@@ -176,6 +188,19 @@ func (s *xmlString) addContent(name string, content string) {
 	s.add(">")
 	s.addLine()
 	s.lastElementIsStart = false
+}
+
+// addContentValue writes a value as the current element's inline text content
+// (XSD simple content), e.g. <comments>en g/m3</comments>: it closes the open
+// start tag and appends the text, leaving the closing tag to endElement (which
+// keeps it inline via lastElementHasText). The content must already be escaped.
+func (s *xmlString) addContentValue(content string) {
+	if s.lastElementIsStart {
+		s.add(">")
+		s.lastElementIsStart = false
+	}
+	s.add(content)
+	s.lastElementHasText = true
 }
 
 func (s *xmlString) getElementIndent() string {
