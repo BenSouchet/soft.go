@@ -70,6 +70,10 @@ type XMLEncoder struct {
 	xmlVersion       string
 	encoding         string
 	keepDefaults     bool
+	// authoring (no-namespace) output controls, all opt-in via encode options:
+	suppressDefaultNS    bool                                         // omit the default xmlns on the root
+	noNSSchemaLocation   string                                       // emit xsi:noNamespaceSchemaLocation
+	featureValueProvider func(EObject, EStructuralFeature) string     // kind="attribute" ref → verbatim value (name) instead of href/id-ref
 }
 
 func NewXMLEncoder(resource EResource, w io.Writer, options map[string]any) *XMLEncoder {
@@ -90,6 +94,9 @@ func NewXMLEncoder(resource EResource, w io.Writer, options map[string]any) *XML
 		if extendedMetaData := options[XML_OPTION_EXTENDED_META_DATA]; extendedMetaData != nil {
 			s.extendedMetaData = extendedMetaData.(*ExtendedMetaData)
 		}
+		s.suppressDefaultNS, _ = options[XML_OPTION_SUPPRESS_DEFAULT_NS].(bool)
+		s.noNSSchemaLocation, _ = options[XML_OPTION_NO_NAMESPACE_SCHEMA_LOCATION].(string)
+		s.featureValueProvider, _ = options[XML_OPTION_FEATURE_VALUE_PROVIDER].(func(EObject, EStructuralFeature) string)
 	}
 	if s.extendedMetaData == nil {
 		s.extendedMetaData = NewExtendedMetaData()
@@ -209,11 +216,25 @@ func (s *XMLEncoder) saveNamespaces() {
 	}
 	sort.Strings(prefixes)
 	for _, prefix := range prefixes {
+		// No-namespace (authoring) output: omit the default-namespace declaration so
+		// the root and its unqualified-package elements stay bare (<physical>, not
+		// xmlns="…"). Prefixed namespaces (e.g. xsi) are still declared.
+		if s.suppressDefaultNS && prefix == "" {
+			continue
+		}
 		attribute := "xmlns"
 		if len(prefix) > 0 {
 			attribute += ":" + prefix
 		}
 		s.str.addAttribute(attribute, s.prefixesToURI[prefix])
+	}
+	// Authoring form declares the schema via xsi:noNamespaceSchemaLocation rather
+	// than a default namespace; emit it (declaring xmlns:xsi if nothing else did).
+	if s.noNSSchemaLocation != "" {
+		if _, ok := s.prefixesToURI["xsi"]; !ok {
+			s.str.addAttribute("xmlns:xsi", "http://www.w3.org/2001/XMLSchema-instance")
+		}
+		s.str.addAttribute("xsi:noNamespaceSchemaLocation", s.noNSSchemaLocation)
 	}
 }
 
@@ -247,6 +268,11 @@ func (s *XMLEncoder) saveFeatures(eObject EObject, attributesOnly bool) bool {
 				s.saveDataTypeSingle(eObject, eFeature)
 				continue
 			case xsfkObjectAttributeSingle:
+				// Authoring write-back: emit the target's name (provider value) verbatim
+				// as the attribute value instead of an href/id-ref (e.g. protection="Aeronef").
+				if s.saveProvidedFeatureValue(eObject, eFeature) {
+					continue
+				}
 				// kind="attribute" reference written as an attribute: a same-resource
 				// (or detached) target uses an intra-doc IDREF ("#frag"), a
 				// cross-resource target uses a full href ("File.xml#frag") - both as
@@ -261,6 +287,9 @@ func (s *XMLEncoder) saveFeatures(eObject EObject, attributesOnly bool) bool {
 				}
 				continue
 			case xsfkObjectAttributeMany:
+				if s.saveProvidedFeatureValue(eObject, eFeature) {
+					continue
+				}
 				switch s.getSaveResourceKindMany(eObject, eFeature) {
 				case cross:
 					s.saveEObjectMany(eObject, eFeature)
@@ -286,6 +315,12 @@ func (s *XMLEncoder) saveFeatures(eObject EObject, attributesOnly bool) bool {
 			case xsfkDataTypeContentSingle:
 			case xsfkObjectHrefSingleUnsettable:
 				if !s.isNil(eObject, eFeature) {
+					// Authoring: a non-containment reference modeled without kind="attribute"
+					// still references its target by name in authoring form, so emit the
+					// provider's name as an attribute instead of an href element.
+					if s.saveProvidedFeatureValue(eObject, eFeature) {
+						continue
+					}
 					switch s.getSaveResourceKindSingle(eObject, eFeature) {
 					case cross:
 					case same:
@@ -296,6 +331,9 @@ func (s *XMLEncoder) saveFeatures(eObject EObject, attributesOnly bool) bool {
 					}
 				}
 			case xsfkObjectHrefSingle:
+				if s.saveProvidedFeatureValue(eObject, eFeature) {
+					continue
+				}
 				switch s.getSaveResourceKindSingle(eObject, eFeature) {
 				case cross:
 				case same:
@@ -309,6 +347,9 @@ func (s *XMLEncoder) saveFeatures(eObject EObject, attributesOnly bool) bool {
 					s.saveManyEmpty(eObject, eFeature)
 					continue
 				} else {
+					if s.saveProvidedFeatureValue(eObject, eFeature) {
+						continue
+					}
 					switch s.getSaveResourceKindMany(eObject, eFeature) {
 					case cross:
 					case same:
@@ -320,6 +361,9 @@ func (s *XMLEncoder) saveFeatures(eObject EObject, attributesOnly bool) bool {
 				}
 
 			case xsfkObjectHrefMany:
+				if s.saveProvidedFeatureValue(eObject, eFeature) {
+					continue
+				}
 				switch s.getSaveResourceKindMany(eObject, eFeature) {
 				case cross:
 				case same:
@@ -428,6 +472,26 @@ func (s *XMLEncoder) saveDataTypeMany(eObject EObject, eFeature EStructuralFeatu
 
 func (s *XMLEncoder) saveManyEmpty(_ EObject, eFeature EStructuralFeature) {
 	s.str.addAttribute(s.getFeatureQName(eFeature), "")
+}
+
+// saveProvidedFeatureValue, when a featureValueProvider is configured, writes the
+// provider's string for this kind="attribute" reference verbatim as the attribute
+// value (the authoring reference key - a target's name - for a single ref, or the
+// caller-joined keys for a many ref) and returns true. A nil provider or an empty
+// return falls through to the default href / id-ref encoding.
+func (s *XMLEncoder) saveProvidedFeatureValue(eObject EObject, eFeature EStructuralFeature) bool {
+	if s.featureValueProvider == nil {
+		return false
+	}
+	v := s.featureValueProvider(eObject, eFeature)
+	if v == "" {
+		return false
+	}
+	// Escape like every other attribute value (addAttribute writes raw): a reference
+	// name can contain & < > " (e.g. "R&D"); writing it raw produces invalid XML that
+	// truncates the document on reload.
+	s.str.addAttribute(s.getFeatureQName(eFeature), html.EscapeString(v))
+	return true
 }
 
 func (s *XMLEncoder) saveEObjectSingle(eObject EObject, eFeature EStructuralFeature) {
