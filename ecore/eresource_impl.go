@@ -422,6 +422,22 @@ func (r *EResourceImpl) Load() {
 
 func (r *EResourceImpl) LoadWithOptions(options map[string]any) {
 	if !r.isLoaded {
+		// Merge the resource set's default load options so lazily-resolved
+		// resources (loaded with no explicit options, e.g. during proxy
+		// resolution) still get the set-wide decode options. A resource's own
+		// options take precedence.
+		if r.resourceSet != nil {
+			if defaults := r.resourceSet.GetDefaultLoadOptions(); len(defaults) > 0 {
+				merged := make(map[string]any, len(defaults)+len(options))
+				for k, v := range defaults {
+					merged[k] = v
+				}
+				for k, v := range options {
+					merged[k] = v
+				}
+				options = merged
+			}
+		}
 		uriConverter := r.getURIConverter()
 		if uriConverter != nil && r.uri != nil {
 			rd, err := uriConverter.CreateReader(r.uri)
