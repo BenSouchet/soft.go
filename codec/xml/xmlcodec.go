@@ -26,6 +26,9 @@ const (
 	OPTION_KEEP_DEFAULTS                 = "KEEP_DEFAULTS"                 // if true , save unset features with a default value
 	OPTION_ENCODING                      = "ENCODING"                      // encode: string, the encoding of the document, an IANA name, UTF-8 by default
 	OPTION_SCHEMA_LOCATION               = "SCHEMA_LOCATION"               // encode: if true , save the location of the packages of the document, as EMF; map[string]string, the location of the schema of each namespace, "" for a schema without namespace, written instead of the ones its document root records
+	OPTION_ID_REFERENCE_AS_PROXY         = "ID_REFERENCE_AS_PROXY"         // if true , an id that resolves to nothing in the document becomes a proxy carrying the raw id, for an external resolver
+	OPTION_SUPPRESS_DEFAULT_NS           = "SUPPRESS_DEFAULT_NS"           // encode: if true , omit the default xmlns declaration on the root (no-namespace output)
+	OPTION_FEATURE_VALUE_PROVIDER        = "FEATURE_VALUE_PROVIDER"        // encode: func(ecore.EObject, ecore.EStructuralFeature) string, a non-empty value is written verbatim in place of a reference
 )
 
 type Codec struct {
