@@ -12,10 +12,27 @@
 package ecore
 
 import (
+	"math"
 	"reflect"
 	"strconv"
 	"time"
 )
+
+// formatFloatXSD renders a float in XSD canonical lexical form. The special values
+// serialize as INF / -INF / NaN (W3C XSD), not Go's "+Inf"/"-Inf"/"NaN" — so they
+// round-trip with the schema and with other readers (ParseFloat accepts INF/-INF/NaN).
+func formatFloatXSD(v float64, bitSize int) string {
+	switch {
+	case math.IsInf(v, 1):
+		return "INF"
+	case math.IsInf(v, -1):
+		return "-INF"
+	case math.IsNaN(v):
+		return "NaN"
+	default:
+		return strconv.FormatFloat(v, 'f', -1, bitSize)
+	}
+}
 
 type ecoreFactoryInternal interface {
 	createEBigDecimalFromString(eDataType EDataType, literalValue string) any
@@ -439,7 +456,7 @@ func (ecoreFactoryImpl *EcoreFactoryImpl) createEBigDecimalFromString(eDataType 
 
 func (ecoreFactoryImpl *EcoreFactoryImpl) convertEBigDecimalToString(eDataType EDataType, instanceValue any) string {
 	v, _ := instanceValue.(float64)
-	return strconv.FormatFloat(v, 'f', -1, 64)
+	return formatFloatXSD(v, 64)
 }
 
 func (ecoreFactoryImpl *EcoreFactoryImpl) createEBigIntegerFromString(eDataType EDataType, literalValue string) any {
@@ -554,7 +571,7 @@ func (ecoreFactoryImpl *EcoreFactoryImpl) createEDoubleFromString(eDataType EDat
 
 func (ecoreFactoryImpl *EcoreFactoryImpl) convertEDoubleToString(eDataType EDataType, instanceValue any) string {
 	v, _ := instanceValue.(float64)
-	return strconv.FormatFloat(v, 'f', -1, 64)
+	return formatFloatXSD(v, 64)
 }
 
 func (ecoreFactoryImpl *EcoreFactoryImpl) createEDoubleObjectFromString(eDataType EDataType, literalValue string) any {
@@ -574,7 +591,7 @@ func (ecoreFactoryImpl *EcoreFactoryImpl) createEFloatFromString(eDataType EData
 
 func (ecoreFactoryImpl *EcoreFactoryImpl) convertEFloatToString(eDataType EDataType, instanceValue any) string {
 	v, _ := instanceValue.(float32)
-	return strconv.FormatFloat(float64(v), 'f', -1, 32)
+	return formatFloatXSD(float64(v), 32)
 }
 
 func (ecoreFactoryImpl *EcoreFactoryImpl) createEFloatObjectFromString(eDataType EDataType, literalValue string) any {

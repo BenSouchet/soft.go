@@ -84,6 +84,17 @@ func (list *AbstractEList) Add(elem any) bool {
 	return true
 }
 
+// AddUnique appends elem WITHOUT the uniqueness Contains() scan that Add()
+// performs. On a unique list, Add() is O(n) per call (linear Contains), so
+// building an n-element list element-by-element is O(n²) — pathological when an
+// XML load resolves a large many-valued reference. The XML source is the
+// authoritative model and cannot list the same reference twice in a unique
+// feature, so the scan is pure waste; addUnique is exactly EMF's loader fast
+// path. Inverse maintenance and notification (doAdd) are preserved.
+func (list *AbstractEList) AddUnique(elem any) {
+	list.asAbstractEList().doAdd(elem)
+}
+
 func (list *AbstractEList) AddAll(collection Collection) bool {
 	if list.isUnique {
 		collection = list.getNonDuplicates(collection)

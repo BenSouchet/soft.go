@@ -80,6 +80,7 @@ type XMLDecoder struct {
 	simpleFeatures         map[EClass]EStructuralFeature
 	isSuppressDocumentRoot bool
 	isResolveDeferred      bool
+	isIDReferenceAsProxy   bool
 }
 
 func NewXMLDecoder(resource EResource, r io.Reader, options map[string]any) *XMLDecoder {
@@ -96,6 +97,7 @@ func NewXMLDecoder(resource EResource, r io.Reader, options map[string]any) *XML
 	if options != nil {
 		l.idAttributeName, _ = options[XML_OPTION_ID_ATTRIBUTE_NAME].(string)
 		l.isResolveDeferred = options[XML_OPTION_DEFERRED_REFERENCE_RESOLUTION] == true
+		l.isIDReferenceAsProxy = options[XML_OPTION_ID_REFERENCE_AS_PROXY] == true
 		l.isSuppressDocumentRoot = options[XML_OPTION_SUPPRESS_DOCUMENT_ROOT] == true
 		if extendedMetaData := options[XML_OPTION_EXTENDED_META_DATA]; extendedMetaData != nil {
 			l.extendedMetaData = extendedMetaData.(*ExtendedMetaData)
@@ -486,6 +488,19 @@ func (l *XMLDecoder) handleFeature(space string, local string) {
 
 }
 
+// xmlAppendUnique appends value to a many-valued feature list during load using
+// the unchecked AddUnique fast path when the list supports it (every soft.go
+// list, via AbstractEList), falling back to Add otherwise (e.g. a mock). This
+// turns the O(n²) load of a large many-valued reference (Add's per-element
+// uniqueness scan) into O(n); see AbstractEList.AddUnique.
+func xmlAppendUnique(eList EList, value any) {
+	if au, ok := eList.(interface{ AddUnique(any) }); ok {
+		au.AddUnique(value)
+	} else {
+		eList.Add(value)
+	}
+}
+
 func (l *XMLDecoder) setFeatureValue(eObject EObject,
 	eFeature EStructuralFeature,
 	value any,
@@ -509,16 +524,16 @@ func (l *XMLDecoder) setFeatureValue(eObject EObject,
 		eList := eObject.EGetResolve(eFeature, false).(EList)
 		if position == -2 {
 		} else if value == nil {
-			eList.Add(nil)
+			xmlAppendUnique(eList, nil)
 		} else {
-			eList.Add(eFactory.CreateFromString(eDataType, value.(string)))
+			xmlAppendUnique(eList, eFactory.CreateFromString(eDataType, value.(string)))
 		}
 	case xlfkManyAdd:
 		fallthrough
 	case xlfkManyMove:
 		eList := eObject.EGetResolve(eFeature, false).(EList)
 		if position == -1 {
-			eList.Add(value)
+			xmlAppendUnique(eList, value)
 		} else if position == -2 {
 			eList.Clear()
 		} else if eObject == value {
@@ -529,7 +544,7 @@ func (l *XMLDecoder) setFeatureValue(eObject EObject,
 				eList.Move(position, index)
 			}
 		} else if kind == xlfkManyAdd {
-			eList.Add(value)
+			xmlAppendUnique(eList, value)
 		} else {
 			eList.MoveObject(position, value)
 		}
@@ -628,7 +643,18 @@ func (l *XMLDecoder) setValueFromId(eObject EObject, eReference EReference, ids 
 	isFirstID := true
 	position := 0
 	references := []xmlReference{}
-	tokens := strings.Split(ids, " ")
+	// A reference attribute is, by the XML IDREFS convention, a space-separated
+	// list of ids. That convention is incompatible with databases whose ids are
+	// human names containing spaces ("Missile SA Stinger"): splitting shreds one
+	// reference into several bogus ones. When ids are resolved by name as proxies
+	// (XML_OPTION_ID_REFERENCE_AS_PROXY) the whole attribute value is a single id —
+	// multi-valued references are expressed as repeated elements, not a space list.
+	var tokens []string
+	if l.isIDReferenceAsProxy {
+		tokens = []string{ids}
+	} else {
+		tokens = strings.Split(ids, " ")
+	}
 	qName := ""
 	for _, token := range tokens {
 		id := token
@@ -777,7 +803,23 @@ func (l *XMLDecoder) handleReferences() {
 	}
 
 	for _, reference := range l.references {
+		// An empty id is not a reference (e.g. an optional ref attribute present but
+		// empty). Skip it: do not resolve, do not proxy (an empty proxy URI would
+		// later be loaded as a file with an empty path), and do not error.
+		if reference.id == "" {
+			continue
+		}
 		eObject := l.resource.GetEObject(reference.id)
+		if eObject == nil && l.isIDReferenceAsProxy {
+			// An id that resolves to nothing in THIS document is left as a proxy
+			// carrying the raw id, for an external resolver (e.g. a name-based
+			// cross-document index) to resolve after load — instead of a spurious
+			// unresolved-reference error. This is what lets a database whose
+			// references are document-local names spanning many files load cleanly,
+			// and avoids appending one diagnostic per cross-file reference (the
+			// errors list is unique → Add is O(n) → O(n²) over a large database).
+			eObject = l.createIDReferenceProxy(reference.feature, reference.id)
+		}
 		if eObject != nil {
 			l.setFeatureValue(reference.object, reference.feature, eObject, reference.pos)
 		} else {
@@ -785,6 +827,49 @@ func (l *XMLDecoder) handleReferences() {
 				"Unresolved reference '"+reference.id+"'", l.resource.GetURI().String(), int(l.decoder.InputOffset()), 0))
 		}
 	}
+}
+
+// createIDReferenceProxy builds a standalone proxy EObject of the reference's
+// target type whose proxy URI is the raw, unresolved id. It is not attached to
+// any feature here; the caller places it via setFeatureValue so multiplicity and
+// position are handled the same as a resolved object. Used only when
+// XML_OPTION_ID_REFERENCE_AS_PROXY is set.
+func (l *XMLDecoder) createIDReferenceProxy(eFeature EStructuralFeature, id string) EObject {
+	if id == "" {
+		return nil // an empty id is no reference; never build an empty-URI proxy
+	}
+	eReference, _ := eFeature.(EReference)
+	if eReference == nil {
+		return nil
+	}
+	eType := eReference.GetEType()
+	eFactory := eType.GetEPackage().GetEFactoryInstance()
+	eProxy := l.createObjectWithFactory(eFactory, eType, false)
+	if eProxy == nil {
+		// The reference target type is abstract (a polymorphic reference): the
+		// factory cannot instantiate it, but the proxy only needs to carry the id
+		// until an external resolver replaces it with the concrete object. A
+		// dynamic EObject typed as the abstract class is a valid, type-compatible
+		// placeholder for that.
+		if eClass, _ := eType.(EClass); eClass != nil {
+			dyn := NewDynamicEObjectImpl()
+			dyn.SetEClass(eClass)
+			eProxy = dyn
+		}
+	}
+	if eProxy != nil {
+		// Make the proxy an INTRA-DOCUMENT reference — the current resource's URI with
+		// the unresolved id as fragment (#id) — not a bare-name URI. A bare name would
+		// be taken for a resource URI by EResolveProxy/ResolveAll, which then creates
+		// and loads a phantom file named after the id: thousands of failing file opens
+		// during a full resolve, plus an empty resource leaked into the set that later
+		// breaks SaveAs ("Unable to find codec"). As a fragment of the already-loaded
+		// resource, resolution merely looks the id up there (nil for an unresolved
+		// name) — no I/O, no leak. An external name resolver reads the id back from
+		// EProxyURI().Fragment() (the same form a same-document href proxy uses).
+		eProxy.(EObjectInternal).ESetProxyURI(NewURIBuilder(l.resource.GetURI()).SetFragment(id).URI())
+	}
+	return eProxy
 }
 
 func (l *XMLDecoder) recordSchemaLocations(eObject EObject) {
