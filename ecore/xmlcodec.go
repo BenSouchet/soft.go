@@ -18,6 +18,10 @@ const (
 	XML_OPTION_DEFERRED_ROOT_ATTACHMENT      = "DEFERRED_ROOT_ATTACHMENT"      // if true , defer id ref resolution
 	XML_OPTION_ID_ATTRIBUTE_NAME             = "ID_ATTRIBUTE_NAME"             // value of the id attribute
 	XML_OPTION_ROOT_OBJECTS                  = "ROOT_OBJECTS"                  // list of root objects to save
+	XML_OPTION_ID_REFERENCE_AS_PROXY         = "ID_REFERENCE_AS_PROXY"         // if true, an id reference that resolves to nothing in the document becomes a proxy carrying the raw id (for external resolution) instead of an unresolved-reference error
+	XML_OPTION_SUPPRESS_DEFAULT_NS           = "SUPPRESS_DEFAULT_NS"           // encode: if true, omit the default-namespace xmlns declaration on the root (no-namespace output)
+	XML_OPTION_NO_NAMESPACE_SCHEMA_LOCATION  = "NO_NAMESPACE_SCHEMA_LOCATION"  // encode: string; if set, emit xsi:noNamespaceSchemaLocation="<value>" on the root (declaring xmlns:xsi if needed)
+	XML_OPTION_FEATURE_VALUE_PROVIDER        = "FEATURE_VALUE_PROVIDER"        // encode: func(EObject, EStructuralFeature) string; for a kind="attribute" reference, a non-empty return is written verbatim as the attribute value instead of an href/id-ref (used to emit a target's name)
 )
 
 type XMLCodec struct {
