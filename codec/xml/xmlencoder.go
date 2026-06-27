@@ -103,6 +103,9 @@ type Encoder struct {
 	// noNamespace is set by a schema without namespace: the names of the packages that are not
 	// qualified (ExtendedMetaData.IsQualified) are written without namespace
 	noNamespace bool
+	// authoring (no-namespace) output, all opt-in by encode options
+	suppressDefaultNS    bool                                                 // omit the default xmlns on the root
+	featureValueProvider func(ecore.EObject, ecore.EStructuralFeature) string // a reference written as a verbatim value (a name)
 }
 
 // schemaLocation is the location of the schema of a namespace, "" for a schema without namespace.
@@ -143,6 +146,8 @@ func NewEncoder(resource ecore.EResource, w io.Writer, options map[string]any) *
 				s.schemaLocations = append(s.schemaLocations, schemaLocation{namespace, locations[namespace]})
 			}
 		}
+		s.suppressDefaultNS, _ = options[OPTION_SUPPRESS_DEFAULT_NS].(bool)
+		s.featureValueProvider, _ = options[OPTION_FEATURE_VALUE_PROVIDER].(func(ecore.EObject, ecore.EStructuralFeature) string)
 	}
 	if s.extendedMetaData == nil {
 		s.extendedMetaData = NewExtendedMetaData()
@@ -281,6 +286,12 @@ func (s *Encoder) SaveNamespaces() {
 	}
 	sort.Strings(prefixes)
 	for _, prefix := range prefixes {
+		// No-namespace (authoring) output: omit the default-namespace declaration so
+		// the root and its unqualified-package elements stay bare (<physical>, not
+		// xmlns="…"). Prefixed namespaces (e.g. xsi) are still declared.
+		if s.suppressDefaultNS && prefix == "" {
+			continue
+		}
 		attribute := "xmlns"
 		if len(prefix) > 0 {
 			attribute += ":" + prefix
@@ -393,6 +404,10 @@ func (s *Encoder) saveFeatures(eObject ecore.EObject, attributesOnly bool) bool 
 				s.saveDataTypeSingle(eObject, eFeature)
 				continue
 			case xsfkObjectAttributeSingle:
+				// A provided value replaces the href or IDREF (XML_OPTION_FEATURE_VALUE_PROVIDER).
+				if s.saveProvidedFeatureValue(eObject, eFeature) {
+					continue
+				}
 				// An attribute reference: a full href across resources, an IDREF otherwise.
 				switch s.getSaveResourceKindSingle(eObject, eFeature) {
 				case cross:
@@ -402,6 +417,9 @@ func (s *Encoder) saveFeatures(eObject ecore.EObject, attributesOnly bool) bool 
 				}
 				continue
 			case xsfkObjectAttributeMany:
+				if s.saveProvidedFeatureValue(eObject, eFeature) {
+					continue
+				}
 				switch s.getSaveResourceKindMany(eObject, eFeature) {
 				case cross:
 					s.saveEObjectMany(eObject, eFeature)
@@ -428,6 +446,12 @@ func (s *Encoder) saveFeatures(eObject ecore.EObject, attributesOnly bool) bool 
 			case xsfkDataTypeElementSingle:
 			case xsfkObjectHrefSingleUnsettable:
 				if !s.isNil(eObject, eFeature) {
+					// Authoring: a non-containment reference modeled without kind="attribute"
+					// still references its target by name in authoring form, so emit the
+					// provider's name as an attribute instead of an href element.
+					if s.saveProvidedFeatureValue(eObject, eFeature) {
+						continue
+					}
 					switch s.getSaveResourceKindSingle(eObject, eFeature) {
 					case cross:
 						if s.useEncodedStyle {
@@ -442,6 +466,9 @@ func (s *Encoder) saveFeatures(eObject ecore.EObject, attributesOnly bool) bool 
 					}
 				}
 			case xsfkObjectHrefSingle:
+				if s.saveProvidedFeatureValue(eObject, eFeature) {
+					continue
+				}
 				switch s.getSaveResourceKindSingle(eObject, eFeature) {
 				case cross:
 					if s.useEncodedStyle {
@@ -459,6 +486,9 @@ func (s *Encoder) saveFeatures(eObject ecore.EObject, attributesOnly bool) bool 
 					s.saveManyEmpty(eObject, eFeature)
 					continue
 				} else {
+					if s.saveProvidedFeatureValue(eObject, eFeature) {
+						continue
+					}
 					switch s.getSaveResourceKindMany(eObject, eFeature) {
 					case cross:
 						if s.useEncodedStyle {
@@ -474,6 +504,9 @@ func (s *Encoder) saveFeatures(eObject ecore.EObject, attributesOnly bool) bool 
 				}
 
 			case xsfkObjectHrefMany:
+				if s.saveProvidedFeatureValue(eObject, eFeature) {
+					continue
+				}
 				switch s.getSaveResourceKindMany(eObject, eFeature) {
 				case cross:
 					if s.useEncodedStyle {
@@ -595,6 +628,21 @@ func (s *Encoder) saveDataTypeMany(eObject ecore.EObject, eFeature ecore.EStruct
 
 func (s *Encoder) saveManyEmpty(_ ecore.EObject, eFeature ecore.EStructuralFeature) {
 	s.str.addAttribute(s.getFeatureQName(eFeature), "")
+}
+
+// saveProvidedFeatureValue writes the featureValueProvider's string for a kind="attribute"
+// reference as the attribute value (a target's name, or the joined names of a many reference) and
+// returns true; without a provider or with an empty value, the default href or id is written.
+func (s *Encoder) saveProvidedFeatureValue(eObject ecore.EObject, eFeature ecore.EStructuralFeature) bool {
+	if s.featureValueProvider == nil {
+		return false
+	}
+	v := s.featureValueProvider(eObject, eFeature)
+	if v == "" {
+		return false
+	}
+	s.str.addAttribute(s.getFeatureQName(eFeature), escapeAttribute(v))
+	return true
 }
 
 func (s *Encoder) saveEObjectSingle(eObject ecore.EObject, eFeature ecore.EStructuralFeature) {
