@@ -71,6 +71,7 @@ type XMLEncoder struct {
 	encoding         string
 	keepDefaults     bool
 	keepRequired     bool // write a required (lowerBound>=1) attribute even at the type default (dense form)
+	denseDefaultField func(EObject, EStructuralFeature) bool // write this optional attribute even at the type default (caller-chosen, e.g. author-declared create-default fields); only with keepRequired
 	// authoring (no-namespace) output controls, all opt-in via encode options:
 	suppressDefaultNS    bool                                         // omit the default xmlns on the root
 	noNSSchemaLocation   string                                       // emit xsi:noNamespaceSchemaLocation
@@ -99,6 +100,7 @@ func NewXMLEncoder(resource EResource, w io.Writer, options map[string]any) *XML
 		s.noNSSchemaLocation, _ = options[XML_OPTION_NO_NAMESPACE_SCHEMA_LOCATION].(string)
 		s.featureValueProvider, _ = options[XML_OPTION_FEATURE_VALUE_PROVIDER].(func(EObject, EStructuralFeature) string)
 		s.keepRequired, _ = options[XML_OPTION_KEEP_REQUIRED_DEFAULTS].(bool)
+		s.denseDefaultField, _ = options[XML_OPTION_DENSE_DEFAULT_FIELDS].(func(EObject, EStructuralFeature) bool)
 	}
 	if s.extendedMetaData == nil {
 		s.extendedMetaData = NewExtendedMetaData()
@@ -661,10 +663,15 @@ func (s *XMLEncoder) shouldSaveFeature(o EObject, f EStructuralFeature) bool {
 	}
 	// Dense form: a required attribute is written even at the type default (int 0,
 	// bool false, ...) — what ADN / an XSD-validating writer emits — so a created
-	// entity carries its required scalar defaults explicitly. Attributes only: a
-	// required reference left unset must not be forced to an empty href.
-	if s.keepRequired && f.GetLowerBound() >= 1 {
-		if _, isAttr := f.(EAttribute); isAttr {
+	// entity carries its required scalar defaults explicitly. An optional attribute the
+	// caller flags (denseDefaultField) is likewise written even at the default — used
+	// for the schema's author-declared create-default fields ADN's ctor always emits
+	// (soft.go has no isSet flag for value-typed unsettable scalars, so EIsSet can't see
+	// a set-to-default). Attributes only: a required reference left unset must not be
+	// forced to an empty href.
+	if s.keepRequired {
+		if _, isAttr := f.(EAttribute); isAttr &&
+			(f.GetLowerBound() >= 1 || (s.denseDefaultField != nil && s.denseDefaultField(o, f))) {
 			return true
 		}
 	}
