@@ -103,6 +103,7 @@ type Encoder struct {
 	// noNamespace is set by a schema without namespace: the names of the packages that are not
 	// qualified (ExtendedMetaData.IsQualified) are written without namespace
 	noNamespace bool
+	keepRequired     bool // write a required attribute even at its type default (dense form)
 	// authoring (no-namespace) output, all opt-in by encode options
 	suppressDefaultNS    bool                                                 // omit the default xmlns on the root
 	featureValueProvider func(ecore.EObject, ecore.EStructuralFeature) string // a reference written as a verbatim value (a name)
@@ -148,6 +149,7 @@ func NewEncoder(resource ecore.EResource, w io.Writer, options map[string]any) *
 		}
 		s.suppressDefaultNS, _ = options[OPTION_SUPPRESS_DEFAULT_NS].(bool)
 		s.featureValueProvider, _ = options[OPTION_FEATURE_VALUE_PROVIDER].(func(ecore.EObject, ecore.EStructuralFeature) string)
+		s.keepRequired, _ = options[OPTION_KEEP_REQUIRED_DEFAULTS].(bool)
 	}
 	if s.extendedMetaData == nil {
 		s.extendedMetaData = NewExtendedMetaData()
@@ -812,7 +814,18 @@ func (s *Encoder) isEmpty(eObject ecore.EObject, eFeature ecore.EStructuralFeatu
 }
 
 func (s *Encoder) shouldSaveFeature(o ecore.EObject, f ecore.EStructuralFeature) bool {
-	return o.EIsSet(f) || (s.keepDefaults && f.GetDefaultValueLiteral() != "")
+	if o.EIsSet(f) || (s.keepDefaults && f.GetDefaultValueLiteral() != "") {
+		return true
+	}
+	// Dense form: a required attribute is written even at its type default (int 0, bool false),
+	// as ADN and XSD-validating writers do. Attributes only: an unset required reference is not
+	// forced to an empty href.
+	if s.keepRequired && f.GetLowerBound() >= 1 {
+		if _, isAttribute := f.(ecore.EAttribute); isAttribute {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Encoder) getSaveFeatureKind(f ecore.EStructuralFeature) xmlSaveFeatureKind {
