@@ -22,6 +22,9 @@ const (
 	XML_OPTION_SUPPRESS_DEFAULT_NS           = "SUPPRESS_DEFAULT_NS"           // encode: if true, omit the default-namespace xmlns declaration on the root (no-namespace output)
 	XML_OPTION_NO_NAMESPACE_SCHEMA_LOCATION  = "NO_NAMESPACE_SCHEMA_LOCATION"  // encode: string; if set, emit xsi:noNamespaceSchemaLocation="<value>" on the root (declaring xmlns:xsi if needed)
 	XML_OPTION_FEATURE_VALUE_PROVIDER        = "FEATURE_VALUE_PROVIDER"        // encode: func(EObject, EStructuralFeature) string; for a kind="attribute" reference, a non-empty return is written verbatim as the attribute value instead of an href/id-ref (used to emit a target's name)
+	// encode: serialize a required (lowerBound>=1) attribute even at the type default,
+	// which is the dense form ADN and XSD-validating writers emit.
+	XML_OPTION_KEEP_REQUIRED_DEFAULTS        = "KEEP_REQUIRED_DEFAULTS"
 )
 
 type XMLCodec struct {
