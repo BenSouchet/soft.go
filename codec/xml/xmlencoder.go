@@ -90,6 +90,8 @@ type Encoder struct {
 	keepDefaults     bool
 	useEncodedStyle  bool
 	keepRequired     bool // write a required attribute even at its type default (dense form)
+	// an optional attribute it returns true for is written even at its type default, with keepRequired
+	denseDefaultField func(ecore.EObject, ecore.EStructuralFeature) bool
 	// authoring (no-namespace) output, all opt-in by encode options
 	suppressDefaultNS    bool                                                 // omit the default xmlns on the root
 	noNSSchemaLocation   string                                               // write xsi:noNamespaceSchemaLocation
@@ -123,6 +125,7 @@ func NewEncoder(resource ecore.EResource, w io.Writer, options map[string]any) *
 		s.noNSSchemaLocation, _ = options[OPTION_NO_NAMESPACE_SCHEMA_LOCATION].(string)
 		s.featureValueProvider, _ = options[OPTION_FEATURE_VALUE_PROVIDER].(func(ecore.EObject, ecore.EStructuralFeature) string)
 		s.keepRequired, _ = options[OPTION_KEEP_REQUIRED_DEFAULTS].(bool)
+		s.denseDefaultField, _ = options[OPTION_DENSE_DEFAULT_FIELDS].(func(ecore.EObject, ecore.EStructuralFeature) bool)
 	}
 	if s.extendedMetaData == nil {
 		s.extendedMetaData = NewExtendedMetaData()
@@ -706,10 +709,12 @@ func (s *Encoder) shouldSaveFeature(o ecore.EObject, f ecore.EStructuralFeature)
 		return true
 	}
 	// Dense form: a required attribute is written even at its type default (int 0, bool false),
-	// as ADN and XSD-validating writers do. Attributes only: an unset required reference is not
-	// forced to an empty href.
-	if s.keepRequired && f.GetLowerBound() >= 1 {
-		if _, isAttribute := f.(ecore.EAttribute); isAttribute {
+	// as ADN and XSD-validating writers do, and so is an optional attribute the caller flags
+	// (denseDefaultField). Attributes only: an unset required reference is not forced to an
+	// empty href.
+	if s.keepRequired {
+		if _, isAttribute := f.(ecore.EAttribute); isAttribute &&
+			(f.GetLowerBound() >= 1 || (s.denseDefaultField != nil && s.denseDefaultField(o, f))) {
 			return true
 		}
 	}
