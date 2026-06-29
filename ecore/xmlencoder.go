@@ -70,6 +70,7 @@ type XMLEncoder struct {
 	xmlVersion       string
 	encoding         string
 	keepDefaults     bool
+	keepRequired     bool // write a required (lowerBound>=1) attribute even at the type default (dense form)
 	// authoring (no-namespace) output controls, all opt-in via encode options:
 	suppressDefaultNS    bool                                         // omit the default xmlns on the root
 	noNSSchemaLocation   string                                       // emit xsi:noNamespaceSchemaLocation
@@ -97,6 +98,7 @@ func NewXMLEncoder(resource EResource, w io.Writer, options map[string]any) *XML
 		s.suppressDefaultNS, _ = options[XML_OPTION_SUPPRESS_DEFAULT_NS].(bool)
 		s.noNSSchemaLocation, _ = options[XML_OPTION_NO_NAMESPACE_SCHEMA_LOCATION].(string)
 		s.featureValueProvider, _ = options[XML_OPTION_FEATURE_VALUE_PROVIDER].(func(EObject, EStructuralFeature) string)
+		s.keepRequired, _ = options[XML_OPTION_KEEP_REQUIRED_DEFAULTS].(bool)
 	}
 	if s.extendedMetaData == nil {
 		s.extendedMetaData = NewExtendedMetaData()
@@ -658,7 +660,19 @@ func (s *XMLEncoder) isEmpty(eObject EObject, eFeature EStructuralFeature) bool 
 }
 
 func (s *XMLEncoder) shouldSaveFeature(o EObject, f EStructuralFeature) bool {
-	return o.EIsSet(f) || (s.keepDefaults && f.GetDefaultValueLiteral() != "")
+	if o.EIsSet(f) || (s.keepDefaults && f.GetDefaultValueLiteral() != "") {
+		return true
+	}
+	// Dense form: a required attribute is written even at the type default (int 0,
+	// bool false, ...) - what ADN / an XSD-validating writer emits - so a created
+	// entity carries its required scalar defaults explicitly. Attributes only: a
+	// required reference left unset must not be forced to an empty href.
+	if s.keepRequired && f.GetLowerBound() >= 1 {
+		if _, isAttr := f.(EAttribute); isAttr {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *XMLEncoder) getSaveFeatureKind(f EStructuralFeature) xmlSaveFeatureKind {
