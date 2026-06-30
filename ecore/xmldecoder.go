@@ -678,7 +678,13 @@ func (l *XMLDecoder) setValueFromId(eObject EObject, eReference EReference, ids 
 				position++
 				continue
 			}
-		} else if index := strings.Index(id, ":"); index != -1 {
+		} else if index := strings.Index(id, ":"); index != -1 && !l.isIDReferenceAsProxy {
+			// A ':' normally separates a cross-document proxy's xsi:type qName
+			// (prefix:Type). But under id-reference-as-proxy the whole value is a
+			// single name resolved later, and authoring names legitimately contain
+			// ':' ("EMB - AGC : lunette chef d'engins HS") - same rationale as the
+			// space-splitting note above. Treating it as a qName here drops the ref
+			// (position stays 0 -> the feature is unset), so skip qName handling.
 			qName = id
 			continue
 		}
