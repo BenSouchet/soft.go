@@ -29,6 +29,13 @@ func FormatFloatXSD(v float64, bitSize int) string {
 	case math.IsNaN(v):
 		return "NaN"
 	default:
+		// Decimal ('f') for the normal range, matching ADN, which does not exponent
+		// mid/small values. Scientific ('g') only from 1e21, where a decimal balloons
+		// to hundreds of digits. 1e21 is where Go's 'g' switches to exponent anyway,
+		// so below it the two agree and 'f' is kept for clarity.
+		if math.Abs(v) >= 1e21 {
+			return strconv.FormatFloat(v, 'g', -1, bitSize)
+		}
 		return strconv.FormatFloat(v, 'f', -1, bitSize)
 	}
 }
