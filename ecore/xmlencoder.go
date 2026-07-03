@@ -317,6 +317,7 @@ func (s *XMLEncoder) saveFeatures(eObject EObject, attributesOnly bool) bool {
 			case xsfkObjectContainSingle:
 			case xsfkObjectContainMany:
 			case xsfkDataTypeContentSingle:
+			case xsfkDataTypeElementSingle:
 			case xsfkObjectHrefSingleUnsettable:
 				if !s.isNil(eObject, eFeature) {
 					// Authoring: a non-containment reference modeled without kind="attribute"
@@ -411,6 +412,8 @@ func (s *XMLEncoder) saveFeatures(eObject EObject, attributesOnly bool) bool {
 			s.saveContainedSingle(eObject, eFeature)
 		case xsfkDataTypeContentSingle:
 			s.saveDataTypeContent(eObject, eFeature)
+		case xsfkDataTypeElementSingle:
+			s.saveDataTypeElementSingle(eObject, eFeature)
 		case xsfkObjectContainManyUnsettable:
 			fallthrough
 		case xsfkObjectContainMany:
@@ -439,6 +442,20 @@ func (s *XMLEncoder) saveDataTypeSingle(eObject EObject, eFeature EStructuralFea
 	str, ok := s.getDataType(val, eFeature, true)
 	if ok {
 		s.str.addAttribute(s.getFeatureQName(eFeature), html.EscapeString(str))
+	}
+}
+
+// saveDataTypeElementSingle writes a scalar attribute whose ExtendedMetaData kind
+// is "element" as its own child element <name>value</name> (e.g.
+// <equipment-category>ANT</equipment-category>) — the EMF encoding for a datatype
+// feature declared as a child element. Counterpart of saveDataTypeSingle (the
+// attribute form) and saveDataTypeMany (repeated child elements). Escapes the
+// value like saveDataTypeSingle so a value with <, > or & stays valid XML.
+func (s *XMLEncoder) saveDataTypeElementSingle(eObject EObject, eFeature EStructuralFeature) {
+	val := eObject.EGetResolve(eFeature, false)
+	str, ok := s.getDataType(val, eFeature, true)
+	if ok {
+		s.str.addContent(s.getFeatureQName(eFeature), html.EscapeString(str))
 	}
 }
 
@@ -746,6 +763,14 @@ func (s *XMLEncoder) getSaveFeatureKind(f EStructuralFeature) xmlSaveFeatureKind
 		// the EMD name, often the synthetic ":0", producing invalid XML).
 		if !isMany && s.extendedMetaData != nil && s.extendedMetaData.GetFeatureKind(f) == "simple" {
 			return xsfkDataTypeContentSingle
+		}
+		// A scalar attribute whose ExtendedMetaData declares kind="element" is a
+		// child element in the XSD (<equipment-category>ANT</equipment-category>),
+		// NOT an attribute. The decoder reads it from the child element; without
+		// this it falls through to xsfkDataTypeSingle and is (wrongly) written back
+		// as an attribute — a round-trip form break vs the source/reference output.
+		if !isMany && s.extendedMetaData != nil && s.extendedMetaData.GetFeatureKind(f) == "element" {
+			return xsfkDataTypeElementSingle
 		}
 		if isMany {
 			return xsfkDataTypeMany
