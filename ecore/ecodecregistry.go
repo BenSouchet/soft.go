@@ -9,6 +9,8 @@
 
 package ecore
 
+import "sync"
+
 const (
 	DEFAULT_EXTENSION = "*"
 )
@@ -19,10 +21,14 @@ type ECodecRegistry interface {
 	GetExtensionToCodecMap() map[string]ECodec
 }
 
+var resourceCodecRegistryOnce sync.Once
 var resourceCodecRegistryInstance ECodecRegistry
 
+// GetCodecRegistry returns the process-wide default codec registry, initialized once on
+// first use. sync.Once, as in GetFactory and GetPackageRegistry, so concurrent first
+// callers cannot race on the lazy assignment.
 func GetCodecRegistry() ECodecRegistry {
-	if resourceCodecRegistryInstance == nil {
+	resourceCodecRegistryOnce.Do(func() {
 		resourceCodecRegistryInstance = NewECodecRegistryImpl()
 		// initialize with default codecs
 		extensionToCodecs := resourceCodecRegistryInstance.GetExtensionToCodecMap()
@@ -32,6 +38,6 @@ func GetCodecRegistry() ECodecRegistry {
 		extensionToCodecs["sqlite"] = &SQLCodec{}
 		protocolToCodecs := resourceCodecRegistryInstance.GetProtocolToCodecMap()
 		protocolToCodecs["memory"] = &NoCodec{}
-	}
+	})
 	return resourceCodecRegistryInstance
 }
