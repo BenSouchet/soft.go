@@ -169,6 +169,11 @@ type EResourceImpl struct {
 	isLoaded        bool
 	isLoading       bool
 	listeners       EList
+	// idCache indexes intrinsic ids -> object for getObjectByID when no
+	// EObjectIDManager is set. Built lazily by one tree scan, then kept O(1) and
+	// maintained incrementally on attach/detach. Without it, getObjectByID is O(n)
+	// per call -> O(n²) over a full ResolveAll of a large multi-document database.
+	idCache map[string]EObject
 }
 
 // NewBasicEObject is BasicEObject constructor
@@ -312,14 +317,22 @@ func (r *EResourceImpl) getObjectByID(id string) EObject {
 	if r.objectIDManager != nil {
 		return r.objectIDManager.GetEObject(id)
 	}
-	for it := r.getAllContentsResolve(r.GetInterfaces(), false); it.HasNext(); {
-		eObject := it.Next().(EObject)
-		objectID := GetEObjectID(eObject)
-		if id == objectID {
-			return eObject
+	// Build the intrinsic-id index once (unresolved walk - no proxy resolution, so no
+	// re-entrancy), then serve O(1). Keeps first-in-tree-order on collisions, matching
+	// the previous linear scan's result.
+	if r.idCache == nil {
+		cache := make(map[string]EObject)
+		for it := r.getAllContentsResolve(r.GetInterfaces(), false); it.HasNext(); {
+			eObject := it.Next().(EObject)
+			if objectID := GetEObjectID(eObject); objectID != "" {
+				if _, exists := cache[objectID]; !exists {
+					cache[objectID] = eObject
+				}
+			}
 		}
+		r.idCache = cache
 	}
-	return nil
+	return r.idCache[id]
 }
 
 func (r *EResourceImpl) getObjectByPath(uriFragmentPath []string) EObject {
@@ -351,7 +364,7 @@ func (r *EResourceImpl) getObjectForRootSegment(rootSegment string) EObject {
 }
 
 func (r *EResourceImpl) IsAttachedDetachedRequired() bool {
-	return r.objectIDManager != nil || (r.listeners != nil && !r.listeners.Empty())
+	return r.objectIDManager != nil || r.idCache != nil || (r.listeners != nil && !r.listeners.Empty())
 }
 
 func (r *EResourceImpl) Attached(object EObject) {
@@ -368,6 +381,11 @@ func (r *EResourceImpl) Attached(object EObject) {
 func (r *EResourceImpl) DoAttached(object EObject) {
 	if r.objectIDManager != nil {
 		r.objectIDManager.Register(object)
+	}
+	if r.idCache != nil {
+		if id := GetEObjectID(object); id != "" {
+			r.idCache[id] = object
+		}
 	}
 	if r.listeners != nil {
 		for itListener := r.listeners.Iterator(); itListener.HasNext(); {
@@ -391,6 +409,11 @@ func (r *EResourceImpl) Detached(object EObject) {
 func (r *EResourceImpl) DoDetached(object EObject) {
 	if r.objectIDManager != nil {
 		r.objectIDManager.UnRegister(object)
+	}
+	if r.idCache != nil {
+		if id := GetEObjectID(object); id != "" {
+			delete(r.idCache, id)
+		}
 	}
 	if r.listeners != nil {
 		for itListener := r.listeners.Iterator(); itListener.HasNext(); {
@@ -501,6 +524,7 @@ func (r *EResourceImpl) DoUnload() {
 	r.contents = nil
 	r.errors = nil
 	r.warnings = nil
+	r.idCache = nil
 	if r.objectIDManager != nil {
 		r.objectIDManager.Clear()
 	}
