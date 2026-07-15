@@ -297,8 +297,13 @@ func (s *Encoder) saveFeatures(eObject ecore.EObject, attributesOnly bool) bool 
 				s.saveDataTypeSingle(eObject, eFeature)
 				continue
 			case xsfkObjectAttributeSingle:
-				// A provided value replaces the href or IDREF (XML_OPTION_FEATURE_VALUE_PROVIDER).
+				// A provided value replaces the href or IDREF (OPTION_FEATURE_VALUE_PROVIDER).
 				if s.saveProvidedFeatureValue(eObject, eFeature) {
+					continue
+				}
+				// A required attribute reference left unset is written empty, as the schema requires.
+				if v, _ := eObject.EGetResolve(eFeature, false).(ecore.EObject); v == nil {
+					s.str.addAttribute(s.getFeatureQName(eFeature), "")
 					continue
 				}
 				// An attribute reference: a full href across resources, an IDREF otherwise.
@@ -717,6 +722,17 @@ func (s *Encoder) shouldSaveFeature(o ecore.EObject, f ecore.EStructuralFeature)
 			(f.GetLowerBound() >= 1 || (s.denseDefaultField != nil && s.denseDefaultField(o, f))) {
 			return true
 		}
+		// A required reference modeled as an XSD attribute (kind="attribute", e.g. NBC
+		// efficiency/@protection) is written even when unset - as an empty attribute
+		// (protection="") - because the schema requires the attribute to be present and
+		// models "no reference set" as the empty value (a valid, null EReference). A
+		// required reference modeled as an ELEMENT is deliberately NOT forced here: an
+		// unset element ref must not be turned into a dangling empty href.
+		if r, isRef := f.(ecore.EReference); isRef && !r.IsContainment() &&
+			(f.GetLowerBound() >= 1 || (s.denseDefaultField != nil && s.denseDefaultField(o, f))) &&
+			s.extendedMetaData != nil && s.extendedMetaData.GetFeatureKind(f) == "attribute" {
+			return true
+		}
 	}
 	return false
 }
@@ -839,12 +855,26 @@ func (s *Encoder) getSaveResourceKindMany(eObject ecore.EObject, eFeature ecore.
 }
 
 func (s *Encoder) getClassQName(eClass ecore.EClass) string {
+	// A no-namespace document (xsi:noNamespaceSchemaLocation) is one flat vocabulary: names stay
+	// unqualified, whatever package declares them.
+	if s.noNSSchemaLocation != "" {
+		return s.getXmlName(eClass)
+	}
 	return s.getElementQName(eClass.GetEPackage(), s.getXmlName(eClass), false)
 }
 
 func (s *Encoder) getFeatureQName(eFeature ecore.EStructuralFeature) string {
 	if s.extendedMetaData != nil {
 		name := s.extendedMetaData.GetName(eFeature)
+		// A no-namespace document (xsi:noNamespaceSchemaLocation) has a single, flat
+		// vocabulary: every element/attribute is unqualified regardless of which ecore
+		// EPackage (e.g. models/missions/types, each with its own EMF nsURI) declares the
+		// feature. Emitting the package prefix ("missions:dia-type", a foreign-package
+		// leak) breaks round-trip vs the ADN's flat output and fails XSD validation
+		// (the schema expects bare "dia-type"). Return the bare name.
+		if s.noNSSchemaLocation != "" {
+			return name
+		}
 		namespace := s.extendedMetaData.GetNamespace(eFeature)
 		ePackage := s.getPackageForSpace(namespace)
 		if ePackage != nil {
