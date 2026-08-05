@@ -508,24 +508,20 @@ func (l *XMLDecoder) setFeatureValue(eObject EObject,
 	kind := l.getLoadFeatureKind(eFeature)
 	switch kind {
 	case xlfkSingle:
-		eClassifier := eFeature.GetEType()
-		eDataType := eClassifier.(EDataType)
-		eFactory := eDataType.GetEPackage().GetEFactoryInstance()
+		eDataType := eFeature.GetEType().(EDataType)
 		if value == nil {
 			eObject.ESet(eFeature, nil)
-		} else {
+		} else if eFactory := l.factoryFor(eFeature, eDataType); eFactory != nil {
 			eObject.ESet(eFeature, eFactory.CreateFromString(eDataType, value.(string)))
 		}
 
 	case xlfkMany:
-		eClassifier := eFeature.GetEType()
-		eDataType := eClassifier.(EDataType)
-		eFactory := eDataType.GetEPackage().GetEFactoryInstance()
+		eDataType := eFeature.GetEType().(EDataType)
 		eList := eObject.EGetResolve(eFeature, false).(EList)
 		if position == -2 {
 		} else if value == nil {
 			xmlAppendUnique(eList, nil)
-		} else {
+		} else if eFactory := l.factoryFor(eFeature, eDataType); eFactory != nil {
 			xmlAppendUnique(eList, eFactory.CreateFromString(eDataType, value.(string)))
 		}
 	case xlfkManyAdd:
@@ -551,6 +547,37 @@ func (l *XMLDecoder) setFeatureValue(eObject EObject,
 	default:
 		eObject.ESet(eFeature, value)
 	}
+}
+
+// factoryFor is the factory that builds values of eDataType, or nil with the reason already
+// reported as a load diagnostic.
+//
+// It exists because the chain it replaces — eDataType.GetEPackage().GetEFactoryInstance() —
+// dereferenced both links unchecked, on the hottest path in the decoder. A data type whose
+// package link is empty is not a fantasy: a classifier is only in a package while it is
+// CONTAINED by one (EClassifierImpl.GetEPackage tests the container feature id), so a type that
+// is detached, still being built, or reached through a proxy that resolved to something
+// unattached returns nil there. Every one of those is a malformed metamodel, and every one of
+// them used to kill the process from inside a decode — which in a server means one bad model
+// takes down every session, with a stack that names the position argument and not the attribute,
+// the element or the type. A decoder's answer to a metamodel it cannot use is a diagnostic
+// naming what it met, and skipping the value: the resource then reports an error, which is what
+// every other malformed-input path here already does.
+func (l *XMLDecoder) factoryFor(eFeature EStructuralFeature, eDataType EDataType) EFactory {
+	ePackage := eDataType.GetEPackage()
+	if ePackage == nil {
+		l.decodeError("Data type " + eDataType.GetName() + " of feature " + eFeature.GetName() + " belongs to no package")
+		return nil
+	}
+	eFactory := ePackage.GetEFactoryInstance()
+	if eFactory == nil {
+		l.decodeError("Package " + ePackage.GetNsURI() + " has no factory to build " + eDataType.GetName() + " for feature " + eFeature.GetName())
+	}
+	return eFactory
+}
+
+func (l *XMLDecoder) decodeError(message string) {
+	l.error(NewEDiagnosticImpl(message, l.resource.GetURI().String(), int(l.decoder.InputOffset()), 0))
 }
 
 func (l *XMLDecoder) getLoadFeatureKind(eFeature EStructuralFeature) xmlLoadFeatureKind {
