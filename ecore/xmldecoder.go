@@ -508,24 +508,20 @@ func (l *XMLDecoder) setFeatureValue(eObject EObject,
 	kind := l.getLoadFeatureKind(eFeature)
 	switch kind {
 	case xlfkSingle:
-		eClassifier := eFeature.GetEType()
-		eDataType := eClassifier.(EDataType)
-		eFactory := eDataType.GetEPackage().GetEFactoryInstance()
+		eDataType := eFeature.GetEType().(EDataType)
 		if value == nil {
 			eObject.ESet(eFeature, nil)
-		} else {
+		} else if eFactory := l.factoryFor(eFeature, eDataType); eFactory != nil {
 			eObject.ESet(eFeature, eFactory.CreateFromString(eDataType, value.(string)))
 		}
 
 	case xlfkMany:
-		eClassifier := eFeature.GetEType()
-		eDataType := eClassifier.(EDataType)
-		eFactory := eDataType.GetEPackage().GetEFactoryInstance()
+		eDataType := eFeature.GetEType().(EDataType)
 		eList := eObject.EGetResolve(eFeature, false).(EList)
 		if position == -2 {
 		} else if value == nil {
 			xmlAppendUnique(eList, nil)
-		} else {
+		} else if eFactory := l.factoryFor(eFeature, eDataType); eFactory != nil {
 			xmlAppendUnique(eList, eFactory.CreateFromString(eDataType, value.(string)))
 		}
 	case xlfkManyAdd:
@@ -551,6 +547,31 @@ func (l *XMLDecoder) setFeatureValue(eObject EObject,
 	default:
 		eObject.ESet(eFeature, value)
 	}
+}
+
+// factoryFor is the factory that builds values of eDataType, or nil with the reason already
+// reported as a load diagnostic.
+//
+// The chain it replaces dereferenced GetEPackage().GetEFactoryInstance() unchecked. A
+// classifier is only in a package while contained by one, so a type that is detached, still
+// being built, or reached through a proxy that resolved to something unattached returns nil
+// there - and killed the decode from inside the hottest path. Reporting a diagnostic and
+// skipping the value is what every other malformed-input path here already does.
+func (l *XMLDecoder) factoryFor(eFeature EStructuralFeature, eDataType EDataType) EFactory {
+	ePackage := eDataType.GetEPackage()
+	if ePackage == nil {
+		l.decodeError("Data type " + eDataType.GetName() + " of feature " + eFeature.GetName() + " belongs to no package")
+		return nil
+	}
+	eFactory := ePackage.GetEFactoryInstance()
+	if eFactory == nil {
+		l.decodeError("Package " + ePackage.GetNsURI() + " has no factory to build " + eDataType.GetName() + " for feature " + eFeature.GetName())
+	}
+	return eFactory
+}
+
+func (l *XMLDecoder) decodeError(message string) {
+	l.error(NewEDiagnosticImpl(message, l.resource.GetURI().String(), int(l.decoder.InputOffset()), 0))
 }
 
 func (l *XMLDecoder) getLoadFeatureKind(eFeature EStructuralFeature) xmlLoadFeatureKind {
