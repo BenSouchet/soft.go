@@ -10,11 +10,35 @@
 package ecore
 
 import (
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 )
+
+func TestGetPackageRegistryConcurrentInitialization(t *testing.T) {
+	packageRegistryInstance = nil
+	packageRegistryOnce = sync.Once{}
+
+	registries := make(chan EPackageRegistry, 100)
+	var group sync.WaitGroup
+	for range cap(registries) {
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			registries <- GetPackageRegistry()
+		}()
+	}
+	group.Wait()
+	close(registries)
+
+	want := <-registries
+	assert.NotNil(t, want)
+	for registry := range registries {
+		assert.Same(t, want, registry)
+	}
+}
 
 func TestMockEPackageRegistryImpl_RegisterPackage(t *testing.T) {
 	rp := NewEPackageRegistryImpl()
