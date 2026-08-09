@@ -11,10 +11,23 @@ package ecore
 
 import (
 	"math/bits"
+	"sync"
 )
 
+// CompactEObjectImpl packs up to eight optional fields - container, resource, adapters,
+// proxy URI, class, contents, cross references, properties - into one storage word plus a
+// flags bitmap. storage holds the bare value when exactly one field is set and a []any when
+// several are, so the two words only mean anything read together.
+//
+// Every accessor is therefore a critical section, including those that look like pure reads:
+// EAdapters, EContents and ECrossReferences build their list on first use and store it,
+// promoting storage from a bare value to a []any while other readers are in getField.
+//
+// sync.Mutex and not RWMutex: the critical sections are a bitmask test and a slice index,
+// and this type exists to be small.
 type CompactEObjectImpl struct {
 	AbstractEObject
+	mutex   sync.Mutex
 	storage any
 	flags   int
 }
@@ -35,15 +48,55 @@ const (
 )
 
 func (o *CompactEObjectImpl) Initialize() {
+	o.mutex.Lock()
+	defer o.mutex.Unlock()
 	o.flags = deliver_flag | (-1)<<16
 }
 
 func (o *CompactEObjectImpl) hasField(field int) bool {
-	return (o.flags & field) != 0
+	o.mutex.Lock()
+	defer o.mutex.Unlock()
+	return o.hasFieldLocked(field)
 }
 
 func (o *CompactEObjectImpl) getField(field int) any {
-	if o.hasField(field) {
+	o.mutex.Lock()
+	defer o.mutex.Unlock()
+	return o.getFieldLocked(field)
+}
+
+func (o *CompactEObjectImpl) setField(field int, value any) {
+	o.mutex.Lock()
+	defer o.mutex.Unlock()
+	o.setFieldLocked(field, value)
+}
+
+// setFieldIfAbsent publishes value only when the slot is still empty and returns
+// whatever occupies the slot afterwards. It is what the lazily-built features use:
+// building the list is done by the caller outside the lock (EContents needs EClass,
+// which takes this same mutex), so two first readers may both build one, and this is
+// what guarantees only one of them is ever published and both callers get it. Without
+// it a lazy getter is a check-then-set, and two readers hand out two different lists
+// for the same feature.
+func (o *CompactEObjectImpl) setFieldIfAbsent(field int, value any) any {
+	o.mutex.Lock()
+	defer o.mutex.Unlock()
+	if existing := o.getFieldLocked(field); existing != nil {
+		return existing
+	}
+	o.setFieldLocked(field, value)
+	return value
+}
+
+// The Locked helpers below assume o.mutex is held, and are the only readers and writers
+// of the storage/flags pair.
+
+func (o *CompactEObjectImpl) hasFieldLocked(field int) bool {
+	return (o.flags & field) != 0
+}
+
+func (o *CompactEObjectImpl) getFieldLocked(field int) any {
+	if o.hasFieldLocked(field) {
 		if fieldIndex := o.fieldIndex(field); fieldIndex == -1 {
 			return o.storage
 		} else {
@@ -54,8 +107,8 @@ func (o *CompactEObjectImpl) getField(field int) any {
 	}
 }
 
-func (o *CompactEObjectImpl) setField(field int, value any) {
-	if o.hasField(field) {
+func (o *CompactEObjectImpl) setFieldLocked(field int, value any) {
+	if o.hasFieldLocked(field) {
 		if value == nil {
 			o.removeField(field)
 		} else {
@@ -157,10 +210,14 @@ func (o *CompactEObjectImpl) SetEClass(class EClass) {
 }
 
 func (o *CompactEObjectImpl) EDeliver() bool {
+	o.mutex.Lock()
+	defer o.mutex.Unlock()
 	return (o.flags & deliver_flag) != 0
 }
 
 func (o *CompactEObjectImpl) ESetDeliver(deliver bool) {
+	o.mutex.Lock()
+	defer o.mutex.Unlock()
 	if deliver {
 		o.flags |= deliver_flag
 	} else {
@@ -169,12 +226,10 @@ func (o *CompactEObjectImpl) ESetDeliver(deliver bool) {
 }
 
 func (o *CompactEObjectImpl) EAdapters() EList {
-	adapters := o.getField(adapters_flag)
-	if adapters == nil {
-		adapters = newNotifierAdapterList(&o.AbstractENotifier)
-		o.setField(adapters_flag, adapters)
+	if adapters := o.getField(adapters_flag); adapters != nil {
+		return adapters.(EList)
 	}
-	return adapters.(EList)
+	return o.setFieldIfAbsent(adapters_flag, newNotifierAdapterList(&o.AbstractENotifier)).(EList)
 }
 
 func (o *CompactEObjectImpl) EBasicHasAdapters() bool {
@@ -207,29 +262,32 @@ func (o *CompactEObjectImpl) ESetProxyURI(uri *URI) {
 
 // EContents ...
 func (o *CompactEObjectImpl) EContents() EList {
-	contents := o.getField(contents_flag)
-	if contents == nil {
-		eObject := o.AsEObject()
-		contents = newEContentsList(eObject, eObject.EClass().GetEContainmentFeatures(), true)
-		o.setField(contents_flag, contents)
+	if contents := o.getField(contents_flag); contents != nil {
+		return contents.(EList)
 	}
-	return contents.(EList)
+	// Built outside the lock on purpose: EClass() takes this same mutex.
+	eObject := o.AsEObject()
+	contents := newEContentsList(eObject, eObject.EClass().GetEContainmentFeatures(), true)
+	return o.setFieldIfAbsent(contents_flag, contents).(EList)
 }
 
 // ECrossReferences ...
 func (o *CompactEObjectImpl) ECrossReferences() EList {
-	crossReferences := o.getField(cross_flag)
-	if crossReferences == nil {
-		eObject := o.AsEObject()
-		crossReferences = newEContentsList(eObject, eObject.EClass().GetECrossReferenceFeatures(), true)
-		o.setField(cross_flag, crossReferences)
+	if crossReferences := o.getField(cross_flag); crossReferences != nil {
+		return crossReferences.(EList)
 	}
-	return crossReferences.(EList)
+	eObject := o.AsEObject()
+	crossReferences := newEContentsList(eObject, eObject.EClass().GetECrossReferenceFeatures(), true)
+	return o.setFieldIfAbsent(cross_flag, crossReferences).(EList)
 }
 
 // ESetContainer ...
 func (o *CompactEObjectImpl) ESetInternalContainer(newContainer EObject, newContainerFeatureID int) {
-	o.setField(container_flag, newContainer)
+	// One critical section, not two: the container value and the feature id packed
+	// into the high bits of flags must never be visible apart.
+	o.mutex.Lock()
+	defer o.mutex.Unlock()
+	o.setFieldLocked(container_flag, newContainer)
 	o.flags = newContainerFeatureID<<16 | (o.flags & 0x00FF)
 }
 
@@ -241,6 +299,8 @@ func (o *CompactEObjectImpl) EInternalContainer() EObject {
 }
 
 func (o *CompactEObjectImpl) EInternalContainerFeatureID() int {
+	o.mutex.Lock()
+	defer o.mutex.Unlock()
 	return int(o.flags >> 16)
 }
 

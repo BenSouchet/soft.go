@@ -5,6 +5,7 @@ import (
 	"io"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 type EResourceInternal interface {
@@ -169,11 +170,14 @@ type EResourceImpl struct {
 	isLoaded        bool
 	isLoading       bool
 	listeners       EList
-	// idCache indexes intrinsic ids -> object for getObjectByID when no
-	// EObjectIDManager is set. Built lazily by one tree scan, then kept O(1) and
-	// maintained incrementally on attach/detach. Without it, getObjectByID is O(n)
-	// per call -> O(n²) over a full ResolveAll of a large multi-document database.
+	// idCache indexes intrinsic ids -> object for getObjectByID when no EObjectIDManager
+	// is set: built lazily by one tree scan, then O(1) and maintained on attach/detach.
+	// Without it getObjectByID is O(n) per call, so O(n^2) over a full ResolveAll.
+	//
+	// The lazy build is a read that writes, and proxy resolution reaches it under a
+	// SHARED lock - idMutex makes the build happen once and be published once.
 	idCache map[string]EObject
+	idMutex sync.Mutex
 }
 
 // NewBasicEObject is BasicEObject constructor
@@ -319,7 +323,11 @@ func (r *EResourceImpl) getObjectByID(id string) EObject {
 	}
 	// Build the intrinsic-id index once (unresolved walk - no proxy resolution, so no
 	// re-entrancy), then serve O(1). Keeps first-in-tree-order on collisions, matching
-	// the previous linear scan's result.
+	// the previous linear scan's result. Held under idMutex: concurrent readers reach
+	// this through proxy resolution, and the walk is safe to run under the lock
+	// precisely because it does not resolve.
+	r.idMutex.Lock()
+	defer r.idMutex.Unlock()
 	if r.idCache == nil {
 		cache := make(map[string]EObject)
 		for it := r.getAllContentsResolve(r.GetInterfaces(), false); it.HasNext(); {
@@ -364,7 +372,42 @@ func (r *EResourceImpl) getObjectForRootSegment(rootSegment string) EObject {
 }
 
 func (r *EResourceImpl) IsAttachedDetachedRequired() bool {
-	return r.objectIDManager != nil || r.idCache != nil || (r.listeners != nil && !r.listeners.Empty())
+	return r.objectIDManager != nil || r.hasIDCache() || (r.listeners != nil && !r.listeners.Empty())
+}
+
+func (r *EResourceImpl) hasIDCache() bool {
+	r.idMutex.Lock()
+	defer r.idMutex.Unlock()
+	return r.idCache != nil
+}
+
+// putIDCache / dropIDCache keep the index consistent with the tree. They take the same
+// lock as the lazy build so a mutation can never land in a map a reader is still
+// filling in.
+func (r *EResourceImpl) putIDCache(object EObject) {
+	r.idMutex.Lock()
+	defer r.idMutex.Unlock()
+	if r.idCache != nil {
+		if id := GetEObjectID(object); id != "" {
+			r.idCache[id] = object
+		}
+	}
+}
+
+func (r *EResourceImpl) dropIDCache(object EObject) {
+	r.idMutex.Lock()
+	defer r.idMutex.Unlock()
+	if r.idCache != nil {
+		if id := GetEObjectID(object); id != "" {
+			delete(r.idCache, id)
+		}
+	}
+}
+
+func (r *EResourceImpl) clearIDCache() {
+	r.idMutex.Lock()
+	defer r.idMutex.Unlock()
+	r.idCache = nil
 }
 
 func (r *EResourceImpl) Attached(object EObject) {
@@ -382,11 +425,7 @@ func (r *EResourceImpl) DoAttached(object EObject) {
 	if r.objectIDManager != nil {
 		r.objectIDManager.Register(object)
 	}
-	if r.idCache != nil {
-		if id := GetEObjectID(object); id != "" {
-			r.idCache[id] = object
-		}
-	}
+	r.putIDCache(object)
 	if r.listeners != nil {
 		for itListener := r.listeners.Iterator(); itListener.HasNext(); {
 			listener := itListener.Next().(EResourceListener)
@@ -410,11 +449,7 @@ func (r *EResourceImpl) DoDetached(object EObject) {
 	if r.objectIDManager != nil {
 		r.objectIDManager.UnRegister(object)
 	}
-	if r.idCache != nil {
-		if id := GetEObjectID(object); id != "" {
-			delete(r.idCache, id)
-		}
-	}
+	r.dropIDCache(object)
 	if r.listeners != nil {
 		for itListener := r.listeners.Iterator(); itListener.HasNext(); {
 			listener := itListener.Next().(EResourceListener)
@@ -524,7 +559,7 @@ func (r *EResourceImpl) DoUnload() {
 	r.contents = nil
 	r.errors = nil
 	r.warnings = nil
-	r.idCache = nil
+	r.clearIDCache()
 	if r.objectIDManager != nil {
 		r.objectIDManager.Clear()
 	}
