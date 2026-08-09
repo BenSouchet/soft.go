@@ -1,5 +1,9 @@
 package ecore
 
+import (
+	"sync"
+)
+
 type resourcesList struct {
 	BasicENotifyingList
 	resourceSet *EResourceSetImpl
@@ -37,8 +41,19 @@ func (l *resourcesList) inverseRemove(object any, notifications ENotificationCha
 }
 
 // EResourceSetImpl ...
+//
+// The three registries below are built on first use. That first use is reached from
+// proxy resolution -- GetEObject -> GetResource -> GetPackageRegistry -- and
+// Host.ReadStable resolves proxies while holding only a SHARED lock, so "first use"
+// can be several readers at once. Unguarded, each of them built its own converter or
+// registry and published it over the others', which is both a lost write and, for the
+// loser, a registry it goes on reading while nothing else in the process shares it.
+// lazyMutex makes each of them built once and published once. It guards only these
+// fields: it is deliberately NOT held across resource.Load(), because parallel
+// section loading depends on those running concurrently.
 type EResourceSetImpl struct {
 	ENotifierImpl
+	lazyMutex             sync.Mutex
 	resources             EList
 	uriConverter          EURIConverter
 	uriResourceMap        map[*URI]EResource
@@ -135,6 +150,8 @@ func (r *EResourceSetImpl) GetEObject(uri *URI, loadOnDemand bool) EObject {
 }
 
 func (r *EResourceSetImpl) GetURIConverter() EURIConverter {
+	r.lazyMutex.Lock()
+	defer r.lazyMutex.Unlock()
 	if r.uriConverter == nil {
 		r.uriConverter = NewEURIConverterImpl()
 	}
@@ -142,6 +159,8 @@ func (r *EResourceSetImpl) GetURIConverter() EURIConverter {
 }
 
 func (r *EResourceSetImpl) SetURIConverter(uriConverter EURIConverter) {
+	r.lazyMutex.Lock()
+	defer r.lazyMutex.Unlock()
 	r.uriConverter = uriConverter
 }
 
@@ -154,6 +173,8 @@ func (r *EResourceSetImpl) SetDefaultLoadOptions(options map[string]any) {
 }
 
 func (r *EResourceSetImpl) GetPackageRegistry() EPackageRegistry {
+	r.lazyMutex.Lock()
+	defer r.lazyMutex.Unlock()
 	if r.packageRegistry == nil {
 		r.packageRegistry = NewEPackageRegistryImplWithDelegate(GetPackageRegistry())
 	}
@@ -161,10 +182,14 @@ func (r *EResourceSetImpl) GetPackageRegistry() EPackageRegistry {
 }
 
 func (r *EResourceSetImpl) SetPackageRegistry(packageRegistry EPackageRegistry) {
+	r.lazyMutex.Lock()
+	defer r.lazyMutex.Unlock()
 	r.packageRegistry = packageRegistry
 }
 
 func (r *EResourceSetImpl) GetCodecRegistry() ECodecRegistry {
+	r.lazyMutex.Lock()
+	defer r.lazyMutex.Unlock()
 	if r.resourceCodecRegistry == nil {
 		r.resourceCodecRegistry = NewECodecRegistryImplWithDelegate(GetCodecRegistry())
 	}
@@ -172,6 +197,8 @@ func (r *EResourceSetImpl) GetCodecRegistry() ECodecRegistry {
 }
 
 func (r *EResourceSetImpl) SetCodecRegistry(resourceCodecRegistry ECodecRegistry) {
+	r.lazyMutex.Lock()
+	defer r.lazyMutex.Unlock()
 	r.resourceCodecRegistry = resourceCodecRegistry
 }
 
