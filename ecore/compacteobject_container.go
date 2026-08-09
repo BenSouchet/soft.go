@@ -14,11 +14,19 @@ type CompactEObjectContainer struct {
 	container EObject
 }
 
+// ESetInternalContainer writes the container to its own field, but the feature id
+// still lives in the high bits of the packed flags word that every accessor in
+// CompactEObjectImpl reads. Take that type's mutex for it, or this write tears
+// against a concurrent EIsProxy/EProxyURI/EClass.
 func (o *CompactEObjectContainer) ESetInternalContainer(newContainer EObject, newContainerFeatureID int) {
+	o.mutex.Lock()
+	defer o.mutex.Unlock()
 	o.container = newContainer
 	o.flags = newContainerFeatureID<<16 | (o.flags & 0x00FF)
 }
 
 func (o *CompactEObjectContainer) EInternalContainer() EObject {
+	o.mutex.Lock()
+	defer o.mutex.Unlock()
 	return o.container
 }
