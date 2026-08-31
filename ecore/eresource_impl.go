@@ -175,6 +175,10 @@ type EResourceImpl struct {
 	// kept on attach and detach, and rebuilt by the next scan when a lookup misses.
 	idMutex sync.Mutex
 	idIndex map[string]EObject
+
+	// xmlComments holds the comments of the XML document this resource was decoded from, which
+	// the object graph cannot hold: the decoder fills it, the encoder writes it back.
+	xmlComments *XMLComments
 }
 
 // NewBasicEObject is BasicEObject constructor
@@ -517,10 +521,19 @@ func (r *EResourceImpl) Unload() {
 	}
 }
 
+func (r *EResourceImpl) setXMLComments(c *XMLComments) {
+	r.xmlComments = c
+}
+
+func (r *EResourceImpl) getXMLComments() *XMLComments {
+	return r.xmlComments
+}
+
 func (r *EResourceImpl) DoUnload() {
 	r.contents = nil
 	r.errors = nil
 	r.warnings = nil
+	r.xmlComments = nil
 	if r.objectIDManager != nil {
 		r.objectIDManager.Clear()
 	}
