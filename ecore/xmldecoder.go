@@ -56,27 +56,32 @@ type xmlDecoderInternal interface {
 }
 
 type XMLDecoder struct {
-	resource               EResource
-	interfaces             any
-	spacesToFactories      map[string]EFactory
-	attachFn               func(object EObject)
-	errorFn                func(diagnostic EDiagnostic)
-	extendedMetaData       *ExtendedMetaData
-	prefixesToURI          map[string]string
-	decoder                *xml.Decoder
-	textBuilder            *strings.Builder
-	namespaces             *xmlNamespaces
-	xmlVersion             string
-	encoding               string
-	idAttributeName        string
-	references             []xmlReference
-	attributes             []xml.Attr
-	sameDocumentProxies    []EObject
-	notFeatures            []xml.Name
-	types                  []any
-	objects                []EObject
-	deferred               []EObject
-	elements               []string
+	resource            EResource
+	interfaces          any
+	spacesToFactories   map[string]EFactory
+	attachFn            func(object EObject)
+	errorFn             func(diagnostic EDiagnostic)
+	extendedMetaData    *ExtendedMetaData
+	prefixesToURI       map[string]string
+	decoder             *xml.Decoder
+	textBuilder         *strings.Builder
+	namespaces          *xmlNamespaces
+	xmlVersion          string
+	encoding            string
+	idAttributeName     string
+	references          []xmlReference
+	attributes          []xml.Attr
+	sameDocumentProxies []EObject
+	notFeatures         []xml.Name
+	types               []any
+	objects             []EObject
+	deferred            []EObject
+	elements            []string
+	// path and comments carry the document's XML comments out of a decode. The object graph has
+	// no room for a comment (see XMLComments), so the position of each one is recorded against
+	// the element tree instead and handed to the resource when the decode ends.
+	path                   *xmlPath
+	comments               *XMLComments
 	simpleFeatures         map[EClass]EStructuralFeature
 	isSuppressDocumentRoot bool
 	isResolveDeferred      bool
@@ -90,6 +95,7 @@ func NewXMLDecoder(resource EResource, r io.Reader, options map[string]any) *XML
 	l.decoder = xml.NewDecoder(r)
 	l.decoder.CharsetReader = charset.NewReaderLabel
 	l.namespaces = newXMLNamespaces()
+	l.path = newXMLPath()
 	l.prefixesToURI = make(map[string]string)
 	l.spacesToFactories = make(map[string]EFactory)
 	l.simpleFeatures = make(map[EClass]EStructuralFeature)
@@ -169,10 +175,12 @@ func (l *XMLDecoder) decodeTopObject() {
 			l.directive(string([]byte(t)))
 		}
 	}
+	l.publishComments()
 }
 
 func (l *XMLDecoder) startElement(e xml.StartElement) {
 	l.elements = append(l.elements, e.Name.Local)
+	l.path.push(e.Name.Local)
 	l.setAttributes(e.Attr)
 	l.namespaces.pushContext()
 	l.handlePrefixMapping()
@@ -186,6 +194,7 @@ func (l *XMLDecoder) endElement(_ xml.EndElement) {
 	if len(l.elements) > 0 {
 		l.elements = l.elements[:len(l.elements)-1]
 	}
+	l.path.pop()
 
 	// remove last object
 	var eRoot EObject
@@ -512,7 +521,7 @@ func (l *XMLDecoder) setFeatureValue(eObject EObject,
 		if value == nil {
 			eObject.ESet(eFeature, nil)
 		} else if eFactory := l.factoryFor(eFeature, eDataType); eFactory != nil {
-			eObject.ESet(eFeature, eFactory.CreateFromString(eDataType, value.(string)))
+			eObject.ESet(eFeature, eFactory.CreateFromString(eDataType, xsdCollapse(eDataType, value.(string))))
 		}
 
 	case xlfkMany:
@@ -522,7 +531,7 @@ func (l *XMLDecoder) setFeatureValue(eObject EObject,
 		} else if value == nil {
 			xmlAppendUnique(eList, nil)
 		} else if eFactory := l.factoryFor(eFeature, eDataType); eFactory != nil {
-			xmlAppendUnique(eList, eFactory.CreateFromString(eDataType, value.(string)))
+			xmlAppendUnique(eList, eFactory.CreateFromString(eDataType, xsdCollapse(eDataType, value.(string))))
 		}
 	case xlfkManyAdd:
 		fallthrough
@@ -951,7 +960,27 @@ func (l *XMLDecoder) text(data string) {
 	}
 }
 
+// comment keeps a comment the graph cannot hold, addressed by the position it occupies in the
+// element tree, so an encode of the same resource can write it back where it was. Capture is
+// unconditional and invisible: it changes no object, no diagnostic and no output. Whether the
+// comments are written again is decided at the other end, by XML_OPTION_KEEP_COMMENTS.
 func (l *XMLDecoder) comment(comment string) {
+	if l.comments == nil {
+		l.comments = &XMLComments{}
+	}
+	l.comments.Add(l.path.here(), comment)
+}
+
+// publishComments hands what comment collected to the resource, which is the only thing that
+// outlives the decoder and is also what the encoder is given. A document with no comments leaves
+// the resource untouched rather than storing an empty set.
+func (l *XMLDecoder) publishComments() {
+	if l.comments == nil {
+		return
+	}
+	if carrier, _ := l.resource.(xmlCommentCarrier); carrier != nil {
+		carrier.setXMLComments(l.comments)
+	}
 }
 
 func (l *XMLDecoder) processingInstruction(procInst xml.ProcInst) {
