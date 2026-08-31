@@ -181,6 +181,11 @@ type EResourceImpl struct {
 	// happen once and be published once.
 	idCache map[string]EObject
 	idMutex sync.Mutex
+	// xmlComments holds the XML comments the document carried, which no part of the object
+	// graph can represent. The XML decoder puts them here on load and the XML encoder reads
+	// them back on save; see XMLComments. Nil for a resource decoded from a document with no
+	// comments, and for every resource that was never XML at all.
+	xmlComments *XMLComments
 }
 
 // NewBasicEObject is BasicEObject constructor
@@ -558,10 +563,19 @@ func (r *EResourceImpl) Unload() {
 	}
 }
 
+func (r *EResourceImpl) setXMLComments(c *XMLComments) {
+	r.xmlComments = c
+}
+
+func (r *EResourceImpl) getXMLComments() *XMLComments {
+	return r.xmlComments
+}
+
 func (r *EResourceImpl) DoUnload() {
 	r.contents = nil
 	r.errors = nil
 	r.warnings = nil
+	r.xmlComments = nil
 	r.clearIDCache()
 	if r.objectIDManager != nil {
 		r.objectIDManager.Clear()

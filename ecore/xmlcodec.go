@@ -24,6 +24,7 @@ const (
 	XML_OPTION_FEATURE_VALUE_PROVIDER        = "FEATURE_VALUE_PROVIDER"        // encode: func(EObject, EStructuralFeature) string; for a kind="attribute" reference, a non-empty return is written verbatim as the attribute value instead of an href/id-ref (used to emit a target's name)
 	XML_OPTION_KEEP_REQUIRED_DEFAULTS        = "KEEP_REQUIRED_DEFAULTS"        // encode: if true, serialize a required (lowerBound>=1) ATTRIBUTE even when its value equals the type default (e.g. int 0 / bool false) — the dense form ADN/XSD-validating writers emit; a created entity then carries its required scalar defaults explicitly
 	XML_OPTION_DENSE_DEFAULT_FIELDS          = "DENSE_DEFAULT_FIELDS"          // encode: func(EObject, EStructuralFeature) bool; an ATTRIBUTE for which it returns true is serialized even at the type default (like KEEP_REQUIRED_DEFAULTS but for caller-chosen optional attributes — e.g. the schema's author-declared create-default fields). Only consulted when KEEP_REQUIRED_DEFAULTS is set.
+	XML_OPTION_KEEP_COMMENTS                 = "KEEP_COMMENTS"                 // encode: if true, write back the XML comments the resource's document carried, each among the siblings it stood between (see XMLComments). Off by default, because it is the only option here that can add nodes to a document a caller did not ask to change: a decode always collects the comments, and this decides whether a write puts them back.
 )
 
 type XMLCodec struct {
