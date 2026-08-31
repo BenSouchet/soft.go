@@ -55,27 +55,30 @@ type xmlEncoderInternal interface {
 }
 
 type XMLEncoder struct {
-	interfaces       any
-	w                io.Writer
-	resource         EResource
-	roots            EList
-	prefixesToURI    map[string]string
-	uriToPrefixes    map[string][]string
-	packages         map[EPackage]string
-	featureKinds     map[EStructuralFeature]xmlSaveFeatureKind
-	extendedMetaData *ExtendedMetaData
-	str              *xmlString
-	errorFn          func(diagnostic EDiagnostic)
-	idAttributeName  string
-	xmlVersion       string
-	encoding         string
-	keepDefaults     bool
-	keepRequired     bool // write a required (lowerBound>=1) attribute even at the type default (dense form)
+	interfaces        any
+	w                 io.Writer
+	resource          EResource
+	roots             EList
+	prefixesToURI     map[string]string
+	uriToPrefixes     map[string][]string
+	packages          map[EPackage]string
+	featureKinds      map[EStructuralFeature]xmlSaveFeatureKind
+	extendedMetaData  *ExtendedMetaData
+	str               *xmlString
+	errorFn           func(diagnostic EDiagnostic)
+	idAttributeName   string
+	xmlVersion        string
+	encoding          string
+	keepDefaults      bool
+	keepRequired      bool                                   // write a required (lowerBound>=1) attribute even at the type default (dense form)
 	denseDefaultField func(EObject, EStructuralFeature) bool // write this optional attribute even at the type default (caller-chosen, e.g. author-declared create-default fields); only with keepRequired
 	// authoring (no-namespace) output controls, all opt-in via encode options:
-	suppressDefaultNS    bool                                         // omit the default xmlns on the root
-	noNSSchemaLocation   string                                       // emit xsi:noNamespaceSchemaLocation
-	featureValueProvider func(EObject, EStructuralFeature) string     // kind="attribute" ref → verbatim value (name) instead of href/id-ref
+	suppressDefaultNS    bool                                     // omit the default xmlns on the root
+	noNSSchemaLocation   string                                   // emit xsi:noNamespaceSchemaLocation
+	featureValueProvider func(EObject, EStructuralFeature) string // kind="attribute" ref → verbatim value (name) instead of href/id-ref
+	keepComments         bool                                     // write back the comments the resource's document carried
+	comments             *XMLComments                             // those comments, addressed by position; nil unless keepComments and the document had some
+	commentsWritten      int                                      // how many of them found their position, so an unplaced one can be reported rather than vanish
 }
 
 func NewXMLEncoder(resource EResource, w io.Writer, options map[string]any) *XMLEncoder {
@@ -101,9 +104,25 @@ func NewXMLEncoder(resource EResource, w io.Writer, options map[string]any) *XML
 		s.featureValueProvider, _ = options[XML_OPTION_FEATURE_VALUE_PROVIDER].(func(EObject, EStructuralFeature) string)
 		s.keepRequired, _ = options[XML_OPTION_KEEP_REQUIRED_DEFAULTS].(bool)
 		s.denseDefaultField, _ = options[XML_OPTION_DENSE_DEFAULT_FIELDS].(func(EObject, EStructuralFeature) bool)
+		s.keepComments, _ = options[XML_OPTION_KEEP_COMMENTS].(bool)
 	}
 	if s.extendedMetaData == nil {
 		s.extendedMetaData = NewExtendedMetaData()
+	}
+	if s.keepComments {
+		if carrier, _ := resource.(xmlCommentCarrier); carrier != nil {
+			if comments := carrier.getXMLComments(); comments.Len() > 0 {
+				s.comments = comments
+				// The lookup is the whole interface between the encoder and the string
+				// builder: the builder knows where it is, the encoder knows what belongs
+				// there.
+				s.str.commentsAt = func(anchor string) []string {
+					bodies := s.comments.At(anchor)
+					s.commentsWritten += len(bodies)
+					return bodies
+				}
+			}
+		}
 	}
 	return s
 }
@@ -153,6 +172,8 @@ func (s *XMLEncoder) encodeTopObject(eObject EObject) {
 	}
 
 	s.saveTopObject(eObject)
+	s.str.writeComments() // anything the document held after its root element
+	s.reportUnplacedComments()
 
 	// namespaces
 	s.str.resetToFirstElementMark()
@@ -162,6 +183,24 @@ func (s *XMLEncoder) encodeTopObject(eObject EObject) {
 	if err := s.str.write(s.w); err != nil {
 		s.error(NewEDiagnosticImpl(err.Error(), s.resource.GetURI().String(), 0, 0))
 	}
+}
+
+// reportUnplacedComments warns about comments that had no position to go back to.
+//
+// A comment is addressed by where it sat among its siblings, so it is written again only if the
+// encoder passes that same position. It will not when the graph no longer produces the element
+// tree the document was read from - the comment stood inside a subtree that is gone, or inside an
+// element the encoder now writes as self-closing. Losing it is a real loss of content, but not one
+// worth refusing a save over, so it is a warning: the file is still written, and the caller can see
+// what the write could not carry.
+func (s *XMLEncoder) reportUnplacedComments() {
+	if s.comments == nil || s.commentsWritten >= s.comments.Len() || s.resource == nil {
+		return
+	}
+	s.resource.GetWarnings().Add(NewEDiagnosticImpl(
+		fmt.Sprintf("%d of %d XML comments had no position in the written document and were dropped",
+			s.comments.Len()-s.commentsWritten, s.comments.Len()),
+		s.resource.GetURI().String(), 0, 0))
 }
 
 func (s *XMLEncoder) saveHeader() {
@@ -837,6 +876,14 @@ func (s *XMLEncoder) getFeatureQName(eFeature EStructuralFeature) string {
 			return name
 		}
 		namespace := s.extendedMetaData.GetNamespace(eFeature)
+		// A feature with no ExtendedMetaData `namespace` detail is UNQUALIFIED: it belongs
+		// to no XML namespace, so it is written bare and declares nothing. Asking the
+		// package registry for the empty namespace would answer with whichever package a
+		// resource set bound there in order to DECODE a namespace-less document, and that
+		// package's prefix would then be emitted onto a document that never carried one.
+		if namespace == "" {
+			return name
+		}
 		ePackage := s.getPackageForSpace(namespace)
 		if ePackage != nil {
 			return s.getElementQName(ePackage, name, false)
