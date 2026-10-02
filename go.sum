@@ -1,7 +1,7 @@
 github.com/SokaDance/rmx v1.0.1 h1:3fUtbebWfImnyzyFt/CHyxt5xje5eMDBmxMDqU66Mvw=
 github.com/SokaDance/rmx v1.0.1/go.mod h1:9pSmidyq6w9CQCj1yPEWPOgQgxeyE7qB6rmIVCmWFGk=
-github.com/chebyrash/promise v0.0.0-20230709133807-42ec49ba1459 h1:s7UrE2T8jRoriLIddT8fW5+Wf2sXcOgfteXUKD74SaU=
-github.com/chebyrash/promise v0.0.0-20230709133807-42ec49ba1459/go.mod h1:CQthfPdCoGmlBJAG/sP9Km5nfK1/jGpDf1RiG/LUxXw=
+github.com/chebyrash/promise v0.0.0-20260915144232-ce593674804a h1:DVYZETQKAKPXqu6y4lmP16A2SMxufHleKI8y8yYvGsM=
+github.com/chebyrash/promise v0.0.0-20260915144232-ce593674804a/go.mod h1:uDK19PK4XPf86VXvswPDwVejeu9LXPXrLqizEsXhM9I=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/dustin/go-humanize v1.0.1 h1:GzkhY7T5VNhEkwH0PVJgjz+fX1rhBrR7pRT3mDkpeCY=

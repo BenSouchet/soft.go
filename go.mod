@@ -1,10 +1,10 @@
 module github.com/masagroup/soft.go
 
-go 1.24.0
+go 1.27.0
 
 require (
 	github.com/SokaDance/rmx v1.0.1
-	github.com/chebyrash/promise v0.0.0-20230709133807-42ec49ba1459
+	github.com/chebyrash/promise v0.0.0-20260915144232-ce593674804a
 	github.com/davecgh/go-spew v1.1.1
 	github.com/google/uuid v1.6.0
 	github.com/karlseguin/jsonwriter v1.0.4-0.20170525085137-6f05566bac1c
