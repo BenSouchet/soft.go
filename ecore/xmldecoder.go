@@ -656,7 +656,7 @@ func (l *XMLDecoder) setValueFromId(eObject EObject, eReference EReference, ids 
 	// list of ids. That convention is incompatible with databases whose ids are
 	// human names containing spaces ("Missile SA Stinger"): splitting shreds one
 	// reference into several bogus ones. When ids are resolved by name as proxies
-	// (XML_OPTION_ID_REFERENCE_AS_PROXY) the whole attribute value is a single id - 
+	// (XML_OPTION_ID_REFERENCE_AS_PROXY) the whole attribute value is a single id -
 	// multi-valued references are expressed as repeated elements, not a space list.
 	var tokens []string
 	if l.isIDReferenceAsProxy {
