@@ -78,6 +78,7 @@ type XMLDecoder struct {
 	objects                []EObject
 	deferred               []EObject
 	elements               []string
+	simpleFeatures         map[EClass]EStructuralFeature
 	isSuppressDocumentRoot bool
 	isResolveDeferred      bool
 }
@@ -91,6 +92,7 @@ func NewXMLDecoder(resource EResource, r io.Reader, options map[string]any) *XML
 	l.namespaces = newXMLNamespaces()
 	l.prefixesToURI = make(map[string]string)
 	l.spacesToFactories = make(map[string]EFactory)
+	l.simpleFeatures = make(map[EClass]EStructuralFeature)
 	l.notFeatures = append(l.notFeatures, xml.Name{Space: xsiURI, Local: typeAttrib}, xml.Name{Space: xsiURI, Local: schemaLocationAttrib}, xml.Name{Space: xsiURI, Local: noNamespaceSchemaLocationAttrib})
 	if options != nil {
 		l.idAttributeName, _ = options[XML_OPTION_ID_ATTRIBUTE_NAME].(string)
@@ -202,7 +204,12 @@ func (l *XMLDecoder) endElement(_ xml.EndElement) {
 	if l.textBuilder != nil {
 		if eType == load_object_type {
 			if l.textBuilder.Len() > 0 {
-				l.handleProxy(eObject, l.textBuilder.String())
+				// Element text is the class's simple content when it has one, else a proxy URI.
+				if sf := l.getSimpleFeature(eObject.EClass()); sf != nil {
+					l.setFeatureValue(eObject, sf, l.textBuilder.String(), -1)
+				} else {
+					l.handleProxy(eObject, l.textBuilder.String())
+				}
 			}
 		} else if eType != load_error_type {
 			if eObject == nil && len(l.objects) > 0 {
@@ -318,9 +325,32 @@ func (l *XMLDecoder) processObject(eObject EObject) {
 	if eObject != nil {
 		l.objects = append(l.objects, eObject)
 		l.types = append(l.types, load_object_type)
+		// Capture the element text of a class with simple content.
+		if l.getSimpleFeature(eObject.EClass()) != nil {
+			l.textBuilder = &strings.Builder{}
+		}
 	} else {
 		l.types = append(l.types, load_error_type)
 	}
+}
+
+// getSimpleFeature returns the class's kind="simple" attribute, or nil, cached per class.
+func (l *XMLDecoder) getSimpleFeature(eClass EClass) EStructuralFeature {
+	if f, ok := l.simpleFeatures[eClass]; ok {
+		return f
+	}
+	var found EStructuralFeature
+	if l.extendedMetaData != nil {
+		for it := eClass.GetEAllStructuralFeatures().Iterator(); it.HasNext(); {
+			f := it.Next().(EStructuralFeature)
+			if _, isAttr := f.(EAttribute); isAttr && l.extendedMetaData.GetFeatureKind(f) == "simple" {
+				found = f
+				break
+			}
+		}
+	}
+	l.simpleFeatures[eClass] = found
+	return found
 }
 
 func (l *XMLDecoder) createTopObject(space string, local string) EObject {
