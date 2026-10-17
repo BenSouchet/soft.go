@@ -508,9 +508,9 @@ func (l *XMLDecoder) setFeatureValue(eObject EObject,
 		eList := eObject.EGetResolve(eFeature, false).(EList)
 		if position == -2 {
 		} else if value == nil {
-			eList.Add(nil)
+			appendLoaded(eList, nil)
 		} else if eFactory := l.factoryFor(eFeature, eDataType); eFactory != nil {
-			eList.Add(eFactory.CreateFromString(eDataType, value.(string)))
+			appendLoaded(eList, eFactory.CreateFromString(eDataType, value.(string)))
 		}
 	case xlfkManyAdd:
 		fallthrough
