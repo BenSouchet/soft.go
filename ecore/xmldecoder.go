@@ -479,6 +479,16 @@ func (l *XMLDecoder) handleFeature(space string, local string) {
 
 }
 
+// appendLoaded adds a decoded value to a many-valued feature without the duplicate scan, which
+// made loading a long list quadratic. A list without AddUnique falls back to Add.
+func appendLoaded(eList EList, value any) {
+	if unique, ok := eList.(interface{ AddUnique(any) }); ok {
+		unique.AddUnique(value)
+	} else {
+		eList.Add(value)
+	}
+}
+
 func (l *XMLDecoder) setFeatureValue(eObject EObject,
 	eFeature EStructuralFeature,
 	value any,
@@ -498,16 +508,16 @@ func (l *XMLDecoder) setFeatureValue(eObject EObject,
 		eList := eObject.EGetResolve(eFeature, false).(EList)
 		if position == -2 {
 		} else if value == nil {
-			eList.Add(nil)
+			appendLoaded(eList, nil)
 		} else if eFactory := l.factoryFor(eFeature, eDataType); eFactory != nil {
-			eList.Add(eFactory.CreateFromString(eDataType, value.(string)))
+			appendLoaded(eList, eFactory.CreateFromString(eDataType, value.(string)))
 		}
 	case xlfkManyAdd:
 		fallthrough
 	case xlfkManyMove:
 		eList := eObject.EGetResolve(eFeature, false).(EList)
 		if position == -1 {
-			eList.Add(value)
+			appendLoaded(eList, value)
 		} else if position == -2 {
 			eList.Clear()
 		} else if eObject == value {
@@ -518,7 +528,7 @@ func (l *XMLDecoder) setFeatureValue(eObject EObject,
 				eList.Move(position, index)
 			}
 		} else if kind == xlfkManyAdd {
-			eList.Add(value)
+			appendLoaded(eList, value)
 		} else {
 			eList.MoveObject(position, value)
 		}
