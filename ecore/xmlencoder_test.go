@@ -10,6 +10,8 @@
 package ecore
 
 import (
+	"encoding/xml"
+	"io"
 	"os"
 	"strings"
 	"testing"
@@ -17,6 +19,82 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestXMLEncoderEscapesReferenceURIs(t *testing.T) {
+	for _, kind := range []string{"element", "attribute"} {
+		t.Run(kind, func(t *testing.T) {
+			factory := GetFactory()
+			pkg := factory.CreateEPackage()
+			pkg.SetName("refs")
+			pkg.SetNsPrefix("refs")
+			pkg.SetNsURI("urn:refs")
+			rootClass, targetClass := factory.CreateEClass(), factory.CreateEClass()
+			rootClass.SetName("Root")
+			targetClass.SetName("Target")
+			pkg.GetEClassifiers().AddAll(NewImmutableEList([]any{rootClass, targetClass}))
+			references := make([]EReference, 2)
+			for i, name := range []string{"single", "many"} {
+				ref := factory.CreateEReference()
+				ref.SetName(name)
+				ref.SetEType(targetClass)
+				if i == 1 {
+					ref.SetUpperBound(-1)
+				}
+				annotation := factory.CreateEAnnotation()
+				annotation.SetSource("http:///org/eclipse/emf/ecore/util/ExtendedMetaData")
+				annotation.GetDetails().Put("kind", kind)
+				ref.GetEAnnotations().Add(annotation)
+				rootClass.GetEStructuralFeatures().Add(ref)
+				references[i] = ref
+			}
+			root := pkg.GetEFactoryInstance().Create(rootClass)
+			proxy := func(fragment string) EObject {
+				obj := pkg.GetEFactoryInstance().Create(targetClass)
+				obj.(EObjectInternal).ESetProxyURI(NewURI("R&D.xml#" + fragment))
+				return obj
+			}
+			root.ESet(references[0], proxy("first"))
+			root.EGet(references[1]).(EList).AddAll(NewImmutableEList([]any{proxy("first"), proxy("second")}))
+			processor := NewXMLProcessor(XMLProcessorPackages([]EPackage{pkg}))
+			resource := processor.GetResourceSet().CreateResource(NewURI("root.xml"))
+			resource.GetContents().Add(root)
+			options := map[string]any{XML_OPTION_EXTENDED_META_DATA: NewExtendedMetaData()}
+			encoded := processor.SaveToString(resource, options)
+			require.True(t, resource.GetErrors().Empty(), diagnosticError(resource.GetErrors()))
+			require.Contains(t, encoded, "R&amp;D.xml")
+			require.NotContains(t, encoded, "&amp;amp;")
+			decoder := xml.NewDecoder(strings.NewReader(encoded))
+			var values []string
+			for {
+				token, err := decoder.Token()
+				if err == io.EOF {
+					break
+				}
+				require.NoError(t, err)
+				if start, ok := token.(xml.StartElement); ok {
+					for _, attr := range start.Attr {
+						if attr.Name.Local == "href" || attr.Name.Local == "single" || attr.Name.Local == "many" {
+							values = append(values, strings.Fields(attr.Value)...)
+						}
+					}
+				}
+			}
+			require.Equal(t, []string{"R&D.xml#first", "R&D.xml#first", "R&D.xml#second"}, values)
+			reloaded := processor.GetResourceSet().CreateResource(NewURI("roundtrip.xml"))
+			reloaded.LoadWithReader(strings.NewReader(encoded), options)
+			require.True(t, reloaded.GetErrors().Empty(), diagnosticError(reloaded.GetErrors()))
+			require.Equal(t, 1, reloaded.GetContents().Size())
+			object := reloaded.GetContents().Get(0).(EObject)
+			one := object.EGetResolve(references[0], false).(EObjectInternal)
+			require.Contains(t, one.EProxyURI().String(), "R&D.xml#first")
+			many := object.EGetResolve(references[1], false).(EList)
+			require.Equal(t, 2, many.Size())
+			for i, fragment := range []string{"first", "second"} {
+				require.Contains(t, many.Get(i).(EObjectInternal).EProxyURI().String(), "R&D.xml#"+fragment)
+			}
+		})
+	}
+}
 
 func TestXMLEncoderLibraryNoRootWithOptions(t *testing.T) {
 	// load package
