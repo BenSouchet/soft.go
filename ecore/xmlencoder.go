@@ -246,6 +246,23 @@ func (s *XMLEncoder) saveFeatures(eObject EObject, attributesOnly bool) bool {
 			case xsfkDataTypeSingle:
 				s.saveDataTypeSingle(eObject, eFeature)
 				continue
+			case xsfkObjectAttributeSingle:
+				// An attribute reference: a full href across resources, an IDREF otherwise.
+				switch s.getSaveResourceKindSingle(eObject, eFeature) {
+				case cross:
+					s.saveEObjectSingle(eObject, eFeature)
+				case same:
+					s.saveIDRefSingle(eObject, eFeature)
+				}
+				continue
+			case xsfkObjectAttributeMany:
+				switch s.getSaveResourceKindMany(eObject, eFeature) {
+				case cross:
+					s.saveEObjectMany(eObject, eFeature)
+				case same:
+					s.saveIDRefMany(eObject, eFeature)
+				}
+				continue
 			case xsfkDataTypeSingleNillable:
 				if !s.isNil(eObject, eFeature) {
 					s.saveDataTypeSingle(eObject, eFeature)
@@ -394,7 +411,6 @@ func (s *XMLEncoder) saveManyEmpty(_ EObject, eFeature EStructuralFeature) {
 	s.str.addAttribute(s.getFeatureQName(eFeature), "")
 }
 
-//lint:ignore U1000 func (*XMLEncoder).saveEObjectSingle is unused
 func (s *XMLEncoder) saveEObjectSingle(eObject EObject, eFeature EStructuralFeature) {
 	value, _ := eObject.EGetResolve(eFeature, false).(EObject)
 	if value != nil {
@@ -403,7 +419,6 @@ func (s *XMLEncoder) saveEObjectSingle(eObject EObject, eFeature EStructuralFeat
 	}
 }
 
-//lint:ignore U1000 func (*XMLEncoder).saveEObjectMany is unused
 func (s *XMLEncoder) saveEObjectMany(eObject EObject, eFeature EStructuralFeature) {
 	l := eObject.EGetResolve(eFeature, false).(EList)
 	failure := false
@@ -586,6 +601,13 @@ func (s *XMLEncoder) getSaveFeatureKind(f EStructuralFeature) xmlSaveFeatureKind
 		opposite := r.GetEOpposite()
 		if opposite != nil && opposite.IsContainment() {
 			return xsfkTransient
+		}
+		// A kind="attribute" reference is an attribute, as the decoder reads it.
+		if s.extendedMetaData != nil && s.extendedMetaData.GetFeatureKind(f) == "attribute" {
+			if isMany {
+				return xsfkObjectAttributeMany
+			}
+			return xsfkObjectAttributeSingle
 		}
 		if isMany {
 			if isUnsettable {
