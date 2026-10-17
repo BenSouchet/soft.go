@@ -399,7 +399,7 @@ func (s *XMLEncoder) saveEObjectSingle(eObject EObject, eFeature EStructuralFeat
 	value, _ := eObject.EGetResolve(eFeature, false).(EObject)
 	if value != nil {
 		id := s.getHRef(value)
-		s.str.addAttribute(s.getFeatureQName(eFeature), id)
+		s.str.addAttribute(s.getFeatureQName(eFeature), html.EscapeString(id))
 	}
 }
 
@@ -428,7 +428,7 @@ func (s *XMLEncoder) saveEObjectMany(eObject EObject, eFeature EStructuralFeatur
 		}
 	}
 	if !failure && buffer.Len() > 0 {
-		s.str.addAttribute(s.getFeatureQName(eFeature), buffer.String())
+		s.str.addAttribute(s.getFeatureQName(eFeature), html.EscapeString(buffer.String()))
 	}
 }
 
@@ -504,7 +504,7 @@ func (s *XMLEncoder) saveHRef(eObject EObject, eFeature EStructuralFeature) {
 		if eType != eClass && eType != nil && eType.IsAbstract() {
 			s.saveTypeAttribute(eClass)
 		}
-		s.str.addAttribute("href", href)
+		s.str.addAttribute("href", html.EscapeString(href))
 		s.str.endEmptyElement()
 	}
 }
