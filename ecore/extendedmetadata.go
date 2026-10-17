@@ -166,6 +166,19 @@ func (emd *ExtendedMetaData) GetXSISchemaLocationMapFeature(eClass EClass) ERefe
 	return nil
 }
 
+// GetFeatureKind returns the ExtendedMetaData kind of a feature ("attribute", "element",
+// "simple", ...), or "" when none is declared.
+func (emd *ExtendedMetaData) GetFeatureKind(eFeature EStructuralFeature) string {
+	if annotation := eFeature.GetEAnnotation(annotationURI); annotation != nil {
+		if value := annotation.GetDetails().GetValue("kind"); value != nil {
+			if kind, ok := value.(string); ok {
+				return kind
+			}
+		}
+	}
+	return ""
+}
+
 func (emd *ExtendedMetaData) basicGetName(eElement ENamedElement) string {
 	if annotation := eElement.GetEAnnotation(annotationURI); annotation != nil {
 		if name := annotation.GetDetails().GetValue("name"); name != nil {
