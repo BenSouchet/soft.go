@@ -127,3 +127,16 @@ func TestXMLEncoderKindAttributeReferenceToADetachedObject(t *testing.T) {
 	assert.Contains(t, encoded, ` ref="#`)
 	assert.NotContains(t, encoded, "href=")
 }
+
+// A kind="simple" attribute is the element's text content.
+func TestXMLEncoderKindSimpleContentIsElementText(t *testing.T) {
+	m := newKindsModel()
+	root := m.pkg.GetEFactoryInstance().Create(m.root)
+	note := m.pkg.GetEFactoryInstance().Create(m.note)
+	note.ESet(m.noteText, "en g/m3 & more")
+	root.EGet(m.notes).(EList).Add(note)
+
+	encoded, reloaded := m.roundTrip(t, root)
+	assert.Contains(t, encoded, ">en g/m3 &amp; more</notes>")
+	assert.Equal(t, "en g/m3 & more", reloaded.EGet(m.notes).(EList).Get(0).(EObject).EGet(m.noteText))
+}
