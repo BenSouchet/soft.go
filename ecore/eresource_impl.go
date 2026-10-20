@@ -175,6 +175,11 @@ type EResourceImpl struct {
 	// kept on attach and detach, and rebuilt by the next scan when a lookup misses.
 	idMutex sync.Mutex
 	idIndex map[string]EObject
+	// idless is set by a scan that met no object whose class declares an id attribute. A rescan
+	// of such a tree finds nothing, whatever was renamed, so a miss answers nil until an object
+	// with an id attribute is attached. A document referring by name misses on every lookup,
+	// and rescanning each time made resolving it quadratic.
+	idless bool
 
 	// xmlComments holds the comments of the XML document this resource was decoded from, which
 	// the object graph cannot hold: the decoder fills it, the encoder writes it back.
@@ -335,11 +340,18 @@ func (r *EResourceImpl) getObjectByID(id string) EObject {
 	if eObject := r.idIndex[id]; eObject != nil && GetEObjectID(eObject) == id {
 		return eObject
 	}
+	if r.idIndex != nil && r.idless {
+		return nil
+	}
 	// A miss or a stale entry: rescan, keeping the first object of the tree for each id. The
 	// walk does not resolve proxies, so it cannot re-enter this lock.
 	index := map[string]EObject{}
+	idless := true
 	for it := r.getAllContentsResolve(r.GetInterfaces(), false); it.HasNext(); {
 		eObject := it.Next().(EObject)
+		if idless && eObject.EClass().GetEIDAttribute() != nil {
+			idless = false
+		}
 		if objectID := GetEObjectID(eObject); objectID != "" {
 			if _, known := index[objectID]; !known {
 				index[objectID] = eObject
@@ -347,6 +359,7 @@ func (r *EResourceImpl) getObjectByID(id string) EObject {
 		}
 	}
 	r.idIndex = index
+	r.idless = idless
 	return index[id]
 }
 
@@ -554,6 +567,9 @@ func (r *EResourceImpl) indexAttached(object EObject) {
 	r.idMutex.Lock()
 	defer r.idMutex.Unlock()
 	if r.idIndex != nil {
+		if object.EClass().GetEIDAttribute() != nil {
+			r.idless = false
+		}
 		if id := GetEObjectID(object); id != "" {
 			if _, known := r.idIndex[id]; !known {
 				r.idIndex[id] = object
