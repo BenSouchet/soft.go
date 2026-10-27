@@ -42,3 +42,21 @@ func TestXMLSchemaLocationRoundTrip(t *testing.T) {
 
 	assert.Equal(t, document, strings.ReplaceAll(xmlProcessor.SaveToString(eResource, nil), "\r\n", "\n"))
 }
+
+// XML_OPTION_SCHEMA_LOCATION names the schemas of a document a save writes, over the ones its
+// document root records: a writer that knows the schema of a document states it.
+func TestXMLSchemaLocationOption(t *testing.T) {
+	ePackage := loadPackage("library.complex.ecore")
+	require.NotNil(t, ePackage)
+	const namespace = "http:///org/eclipse/emf/examples/library/library.ecore/1.0.0"
+	xmlProcessor := NewXMLProcessor(XMLProcessorPackages([]EPackage{ePackage}))
+	eResource := xmlProcessor.Load(NewURI("testdata/library.complex.xml"))
+	require.True(t, eResource.GetErrors().Empty(), diagnosticError(eResource.GetErrors()))
+
+	result := xmlProcessor.SaveToString(eResource, map[string]any{XML_OPTION_SCHEMA_LOCATION: namespace + " schemas/2.0.0/library.xsd"})
+	assert.Contains(t, result, `<library xmlns="`+namespace+`" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="`+namespace+` schemas/2.0.0/library.xsd"`)
+
+	root := eResource.GetContents().Get(0).(EObject)
+	feature := NewExtendedMetaData().GetXSISchemaLocationMapFeature(root.EClass())
+	assert.False(t, root.EIsSet(feature), "the option leaves the document root as it is")
+}
