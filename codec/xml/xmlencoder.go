@@ -95,6 +95,7 @@ type Encoder struct {
 	// authoring (no-namespace) output, all opt-in by encode options
 	suppressDefaultNS    bool                                                 // omit the default xmlns on the root
 	noNSSchemaLocation   string                                               // write xsi:noNamespaceSchemaLocation
+	xsiSchemaLocation    string                                               // write xsi:schemaLocation: the schemas a document root records
 	featureValueProvider func(ecore.EObject, ecore.EStructuralFeature) string // a reference written as a verbatim value (a name)
 	keepComments         bool                                                 // write back the comments the resource's document carried
 	comments             *XMLComments                                         // those comments, by position; nil unless keepComments and the document had some
@@ -190,6 +191,15 @@ func (s *Encoder) encodeTopObject(eObject ecore.EObject) {
 		if ePrefixMapFeature := s.extendedMetaData.GetXMLNSPrefixMapFeature(eClass); ePrefixMapFeature != nil {
 			m := eObject.EGet(ePrefixMapFeature).(ecore.EMap)
 			s.setPrefixToNamespace(m)
+		}
+		// Read only when set: reading the map builds it on the object.
+		if eSchemaLocationFeature := s.extendedMetaData.GetXSISchemaLocationMapFeature(eClass); eSchemaLocationFeature != nil && eObject.EIsSet(eSchemaLocationFeature) {
+			var pairs []string
+			for it := eObject.EGet(eSchemaLocationFeature).(ecore.EMap).Iterator(); it.HasNext(); {
+				entry := it.Next().(ecore.EMapEntry)
+				pairs = append(pairs, fmt.Sprintf("%v %v", entry.GetKey(), entry.GetValue()))
+			}
+			s.xsiSchemaLocation = strings.Join(pairs, " ")
 		}
 	}
 
@@ -295,6 +305,11 @@ func (s *Encoder) SaveNamespaces() {
 			s.str.addAttribute("xmlns:xsi", "http://www.w3.org/2001/XMLSchema-instance")
 		}
 		s.str.addAttribute("xsi:noNamespaceSchemaLocation", s.noNSSchemaLocation)
+	} else if s.xsiSchemaLocation != "" {
+		if _, ok := s.prefixesToURI["xsi"]; !ok {
+			s.str.addAttribute("xmlns:xsi", "http://www.w3.org/2001/XMLSchema-instance")
+		}
+		s.str.addAttribute("xsi:schemaLocation", escapeAttribute(s.xsiSchemaLocation))
 	}
 }
 
