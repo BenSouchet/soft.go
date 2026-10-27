@@ -127,6 +127,7 @@ func NewEncoder(resource ecore.EResource, w io.Writer, options map[string]any) *
 		}
 		s.suppressDefaultNS, _ = options[OPTION_SUPPRESS_DEFAULT_NS].(bool)
 		s.noNSSchemaLocation, _ = options[OPTION_NO_NAMESPACE_SCHEMA_LOCATION].(string)
+		s.xsiSchemaLocation, _ = options[OPTION_SCHEMA_LOCATION].(string)
 		s.featureValueProvider, _ = options[OPTION_FEATURE_VALUE_PROVIDER].(func(ecore.EObject, ecore.EStructuralFeature) string)
 		s.keepRequired, _ = options[OPTION_KEEP_REQUIRED_DEFAULTS].(bool)
 		s.denseDefaultField, _ = options[OPTION_DENSE_DEFAULT_FIELDS].(func(ecore.EObject, ecore.EStructuralFeature) bool)
@@ -192,8 +193,9 @@ func (s *Encoder) encodeTopObject(eObject ecore.EObject) {
 			m := eObject.EGet(ePrefixMapFeature).(ecore.EMap)
 			s.setPrefixToNamespace(m)
 		}
-		// Read only when set: reading the map builds it on the object.
-		if eSchemaLocationFeature := s.extendedMetaData.GetXSISchemaLocationMapFeature(eClass); eSchemaLocationFeature != nil && eObject.EIsSet(eSchemaLocationFeature) {
+		// Read only when set: reading the map builds it on the object. The option names the
+		// schemas instead.
+		if eSchemaLocationFeature := s.extendedMetaData.GetXSISchemaLocationMapFeature(eClass); eSchemaLocationFeature != nil && s.xsiSchemaLocation == "" && eObject.EIsSet(eSchemaLocationFeature) {
 			var pairs []string
 			for it := eObject.EGet(eSchemaLocationFeature).(ecore.EMap).Iterator(); it.HasNext(); {
 				entry := it.Next().(ecore.EMapEntry)
