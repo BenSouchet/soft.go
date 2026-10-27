@@ -76,6 +76,7 @@ type XMLEncoder struct {
 	suppressDefaultNS    bool                                     // omit the default xmlns on the root
 	noNSSchemaLocation   string                                   // emit xsi:noNamespaceSchemaLocation
 	featureValueProvider func(EObject, EStructuralFeature) string // kind="attribute" ref → verbatim value (name) instead of href/id-ref
+	xsiSchemaLocation    string                                   // emit xsi:schemaLocation: the schemas a document root records
 	keepComments         bool                                     // write back the comments the resource's document carried
 	comments             *XMLComments                             // those comments, addressed by position; nil unless keepComments and the document had some
 	commentsWritten      int                                      // how many of them found their position, so an unplaced one can be reported rather than vanish
@@ -168,6 +169,15 @@ func (s *XMLEncoder) encodeTopObject(eObject EObject) {
 		if ePrefixMapFeature := s.extendedMetaData.GetXMLNSPrefixMapFeature(eClass); ePrefixMapFeature != nil {
 			m := eObject.EGet(ePrefixMapFeature).(EMap)
 			s.setPrefixToNamespace(m)
+		}
+		// Read only when set: reading the map builds it on the object.
+		if eSchemaLocationFeature := s.extendedMetaData.GetXSISchemaLocationMapFeature(eClass); eSchemaLocationFeature != nil && eObject.EIsSet(eSchemaLocationFeature) {
+			var pairs []string
+			for it := eObject.EGet(eSchemaLocationFeature).(EMap).Iterator(); it.HasNext(); {
+				entry := it.Next().(EMapEntry)
+				pairs = append(pairs, fmt.Sprintf("%v %v", entry.GetKey(), entry.GetValue()))
+			}
+			s.xsiSchemaLocation = strings.Join(pairs, " ")
 		}
 	}
 
@@ -278,6 +288,11 @@ func (s *XMLEncoder) saveNamespaces() {
 			s.str.addAttribute("xmlns:xsi", "http://www.w3.org/2001/XMLSchema-instance")
 		}
 		s.str.addAttribute("xsi:noNamespaceSchemaLocation", s.noNSSchemaLocation)
+	} else if s.xsiSchemaLocation != "" {
+		if _, ok := s.prefixesToURI["xsi"]; !ok {
+			s.str.addAttribute("xmlns:xsi", "http://www.w3.org/2001/XMLSchema-instance")
+		}
+		s.str.addAttribute("xsi:schemaLocation", s.xsiSchemaLocation)
 	}
 }
 

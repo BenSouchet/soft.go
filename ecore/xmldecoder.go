@@ -87,6 +87,9 @@ type XMLDecoder struct {
 	isSuppressDocumentRoot bool
 	isResolveDeferred      bool
 	isIDReferenceAsProxy   bool
+	// xsiSchemaLocation is the xsi:schemaLocation of the root element, recorded in the document
+	// root: pairs of a namespace and the location of its schema.
+	xsiSchemaLocation string
 }
 
 func NewXMLDecoder(resource EResource, r io.Reader, options map[string]any) *XMLDecoder {
@@ -281,6 +284,7 @@ func (l *XMLDecoder) handleSchemaLocation() {
 }
 
 func (l *XMLDecoder) handleXSISchemaLocation(loc string) {
+	l.xsiSchemaLocation = loc
 }
 
 func (l *XMLDecoder) handleXSINoNamespaceSchemaLocation(loc string) {
@@ -894,6 +898,15 @@ func (l *XMLDecoder) recordSchemaLocations(eObject EObject) {
 			m := eObject.EGet(xmlnsPrefixMapFeature).(EMap)
 			for prefix, nsURI := range l.prefixesToURI {
 				m.Put(prefix, nsURI)
+			}
+		}
+		// The schema of each namespace, which a save writes back, as EMF does. A document that
+		// names none leaves the map unbuilt.
+		if xsiSchemaLocationFeature := l.extendedMetaData.GetXSISchemaLocationMapFeature(eClass); xsiSchemaLocationFeature != nil && l.xsiSchemaLocation != "" {
+			m := eObject.EGet(xsiSchemaLocationFeature).(EMap)
+			pairs := strings.Fields(l.xsiSchemaLocation)
+			for i := 0; i+1 < len(pairs); i += 2 {
+				m.Put(pairs[i], pairs[i+1])
 			}
 		}
 	}
