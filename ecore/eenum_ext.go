@@ -27,12 +27,21 @@ func (eEnum *EEnumExt) Initialize() {
 	eEnum.GetELiterals()
 }
 
+// GetDefaultValue returns the first literal as the factory of the package of the enum reads it:
+// a value of the Go type of the enum for a generated package, the type its objects hold, the int
+// value of the literal for a dynamic package or an enum without package.
 func (eEnum *EEnumExt) GetDefaultValue() any {
-	if eLiterals := eEnum.GetELiterals(); !eLiterals.Empty() {
-		eLiteral := eLiterals.Get(0).(EEnumLiteral)
-		return eLiteral.GetValue()
+	eLiterals := eEnum.GetELiterals()
+	if eLiterals.Empty() {
+		return nil
 	}
-	return nil
+	eLiteral := eLiterals.Get(0).(EEnumLiteral)
+	if ePackage := eEnum.GetEPackage(); ePackage != nil {
+		if eFactory := ePackage.GetEFactoryInstance(); eFactory != nil {
+			return eFactory.CreateFromString(eEnum, eLiteral.GetLiteral())
+		}
+	}
+	return eLiteral.GetValue()
 }
 
 // GetEEnumLiteralByName default implementation
