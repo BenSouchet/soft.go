@@ -100,9 +100,19 @@ func (list *BasicENotifyingList) createNotification(eventType EventType, oldValu
 	return n
 }
 
+// isNotificationRequired reports whether the notifier has adapters to notify, as EMF's
+// eNotificationRequired: a notifier without adapters keeps none, since EAdapters creates the list
+// and a check would then write into the notifier it reads.
 func (list *BasicENotifyingList) isNotificationRequired() bool {
 	notifier := list.asENotifyingList().GetNotifier()
-	return notifier != nil && notifier.EDeliver() && !notifier.EAdapters().Empty()
+	if notifier == nil || !notifier.EDeliver() {
+		return false
+	}
+	if internal, isInternal := notifier.(ENotifierInternal); isInternal {
+		adapters := internal.EBasicAdapters()
+		return adapters != nil && !adapters.Empty()
+	}
+	return !notifier.EAdapters().Empty()
 }
 
 func (list *BasicENotifyingList) createAndAddNotification(ns ENotificationChain, eventType EventType, oldValue any, newValue any, position int) ENotificationChain {
