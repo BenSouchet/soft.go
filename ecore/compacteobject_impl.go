@@ -11,10 +11,16 @@ package ecore
 
 import (
 	"math/bits"
+	"sync"
 )
 
+// CompactEObjectImpl packs its optional fields into one storage word read with a flags bitmap:
+// mutex makes the pair one critical section. Readers sharing a model read the class or the proxy
+// URI of an object while another goroutine adds an adapter to it, which moves the other fields
+// within storage.
 type CompactEObjectImpl struct {
 	AbstractEObject
+	mutex   sync.Mutex
 	storage any
 	flags   int
 }
@@ -35,15 +41,49 @@ const (
 )
 
 func (o *CompactEObjectImpl) Initialize() {
+	o.mutex.Lock()
+	defer o.mutex.Unlock()
 	o.flags = deliver_flag | (-1)<<16
 }
 
 func (o *CompactEObjectImpl) hasField(field int) bool {
-	return (o.flags & field) != 0
+	o.mutex.Lock()
+	defer o.mutex.Unlock()
+	return o.hasFieldLocked(field)
 }
 
 func (o *CompactEObjectImpl) getField(field int) any {
-	if o.hasField(field) {
+	o.mutex.Lock()
+	defer o.mutex.Unlock()
+	return o.getFieldLocked(field)
+}
+
+func (o *CompactEObjectImpl) setField(field int, value any) {
+	o.mutex.Lock()
+	defer o.mutex.Unlock()
+	o.setFieldLocked(field, value)
+}
+
+// setFieldIfAbsent publishes value unless the slot is set, and returns what the slot holds: two
+// first readers of a lazily built field agree on one value.
+func (o *CompactEObjectImpl) setFieldIfAbsent(field int, value any) any {
+	o.mutex.Lock()
+	defer o.mutex.Unlock()
+	if existing := o.getFieldLocked(field); existing != nil {
+		return existing
+	}
+	o.setFieldLocked(field, value)
+	return value
+}
+
+// The Locked helpers assume o.mutex is held.
+
+func (o *CompactEObjectImpl) hasFieldLocked(field int) bool {
+	return (o.flags & field) != 0
+}
+
+func (o *CompactEObjectImpl) getFieldLocked(field int) any {
+	if o.hasFieldLocked(field) {
 		if fieldIndex := o.fieldIndex(field); fieldIndex == -1 {
 			return o.storage
 		} else {
@@ -54,8 +94,8 @@ func (o *CompactEObjectImpl) getField(field int) any {
 	}
 }
 
-func (o *CompactEObjectImpl) setField(field int, value any) {
-	if o.hasField(field) {
+func (o *CompactEObjectImpl) setFieldLocked(field int, value any) {
+	if o.hasFieldLocked(field) {
 		if value == nil {
 			o.removeField(field)
 		} else {
@@ -157,10 +197,14 @@ func (o *CompactEObjectImpl) SetEClass(class EClass) {
 }
 
 func (o *CompactEObjectImpl) EDeliver() bool {
+	o.mutex.Lock()
+	defer o.mutex.Unlock()
 	return (o.flags & deliver_flag) != 0
 }
 
 func (o *CompactEObjectImpl) ESetDeliver(deliver bool) {
+	o.mutex.Lock()
+	defer o.mutex.Unlock()
 	if deliver {
 		o.flags |= deliver_flag
 	} else {
@@ -169,12 +213,10 @@ func (o *CompactEObjectImpl) ESetDeliver(deliver bool) {
 }
 
 func (o *CompactEObjectImpl) EAdapters() EList {
-	adapters := o.getField(adapters_flag)
-	if adapters == nil {
-		adapters = newNotifierAdapterList(&o.AbstractENotifier)
-		o.setField(adapters_flag, adapters)
+	if adapters := o.getField(adapters_flag); adapters != nil {
+		return adapters.(EList)
 	}
-	return adapters.(EList)
+	return o.setFieldIfAbsent(adapters_flag, newNotifierAdapterList(&o.AbstractENotifier)).(EList)
 }
 
 func (o *CompactEObjectImpl) EBasicHasAdapters() bool {
@@ -221,7 +263,10 @@ func (o *CompactEObjectImpl) ECrossReferences() EList {
 
 // ESetContainer ...
 func (o *CompactEObjectImpl) ESetInternalContainer(newContainer EObject, newContainerFeatureID int) {
-	o.setField(container_flag, newContainer)
+	// The container and its feature id, packed in flags, are published together.
+	o.mutex.Lock()
+	defer o.mutex.Unlock()
+	o.setFieldLocked(container_flag, newContainer)
 	o.flags = newContainerFeatureID<<16 | (o.flags & 0xFFFF)
 }
 
@@ -233,6 +278,8 @@ func (o *CompactEObjectImpl) EInternalContainer() EObject {
 }
 
 func (o *CompactEObjectImpl) EInternalContainerFeatureID() int {
+	o.mutex.Lock()
+	defer o.mutex.Unlock()
 	return int(o.flags >> 16)
 }
 
