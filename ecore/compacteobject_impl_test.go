@@ -10,6 +10,7 @@
 package ecore
 
 import (
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -263,4 +264,31 @@ func TestCompactEObject_ECrossReferences_Inherited(t *testing.T) {
 	ResolveAll(ePackage)
 	assert.Equal(t, eTargetClass, eReference.EGetResolve(eTypeFeature, false))
 	assert.True(t, eReference.ECrossReferences().Contains(eTargetClass))
+}
+
+// Readers sharing a model read the class and the proxy URI of an object while another adds an
+// adapter to it, which moves the fields within the packed storage: every reader sees the values
+// the object holds, and the first readers of EAdapters are handed one list.
+func TestCompactEObject_ConcurrentFirstReads(t *testing.T) {
+	uri := NewURI("memory:/a.xml#x")
+	for range 200 {
+		o := &CompactEObjectImpl{}
+		o.SetInterfaces(o)
+		o.Initialize()
+		o.ESetProxyURI(uri)
+		lists := make([]EList, 16)
+		var group sync.WaitGroup
+		for i := range lists {
+			group.Add(1)
+			go func() {
+				defer group.Done()
+				lists[i] = o.EAdapters()
+				assert.Same(t, uri, o.EProxyURI())
+			}()
+		}
+		group.Wait()
+		for _, l := range lists {
+			assert.Same(t, lists[0], l)
+		}
+	}
 }
