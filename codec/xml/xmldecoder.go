@@ -1094,6 +1094,7 @@ func (l *Decoder) publishComments() {
 func (l *Decoder) processingInstruction(procInst xml.ProcInst) {
 	if procInst.Target == "xml" {
 		content := string(procInst.Inst)
+		SetXMLDeclaration(l.resource, "<?xml "+content+"?>")
 		if ver := l.procInst("version", content); ver != "" {
 			l.xmlVersion = ver
 		}

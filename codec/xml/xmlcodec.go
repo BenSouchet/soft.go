@@ -32,6 +32,8 @@ const (
 	OPTION_KEEP_REQUIRED_DEFAULTS        = "KEEP_REQUIRED_DEFAULTS"        // encode: if true , save a required attribute even at its type default (dense form)
 	OPTION_DENSE_DEFAULT_FIELDS          = "DENSE_DEFAULT_FIELDS"          // encode: func(ecore.EObject, ecore.EStructuralFeature) bool, an optional attribute it flags is saved at its default, with KEEP_REQUIRED_DEFAULTS
 	OPTION_KEEP_COMMENTS                 = "KEEP_COMMENTS"                 // encode: if true , write back the XML comments the document carried, each among the siblings it stood between
+	OPTION_KEEP_XML_DECLARATION          = "KEEP_XML_DECLARATION"          // encode: if true , write the XML declaration the document was read with (XMLDeclaration), as it was written
+	OPTION_MINIMAL_ESCAPE                = "MINIMAL_ESCAPE"                // encode: if true , escape only what XML requires: an apostrophe, and a double quote in a text, stay as they are
 )
 
 type Codec struct {

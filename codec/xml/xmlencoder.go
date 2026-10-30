@@ -34,6 +34,24 @@ func escapeContent(s string) string {
 	return html.EscapeString(s)
 }
 
+// escapeAttribute escapes value as the value of an attribute, with only what XML requires under
+// OPTION_MINIMAL_ESCAPE.
+func (s *Encoder) escapeAttribute(value string) string {
+	if s.minimalEscape {
+		return minimalAttributeEscaper.Replace(value)
+	}
+	return escapeAttribute(value)
+}
+
+// escapeContent escapes value as the content of an element, with only what XML requires under
+// OPTION_MINIMAL_ESCAPE.
+func (s *Encoder) escapeContent(value string) string {
+	if s.minimalEscape {
+		return minimalContentEscaper.Replace(value)
+	}
+	return escapeContent(value)
+}
+
 type xmlSaveFeatureKind int
 
 const (
@@ -98,6 +116,8 @@ type Encoder struct {
 	xsiSchemaLocation    string                                               // write xsi:schemaLocation: the schemas a document root records
 	featureValueProvider func(ecore.EObject, ecore.EStructuralFeature) string // a reference written as a verbatim value (a name)
 	keepComments         bool                                                 // write back the comments the resource's document carried
+	keepDeclaration      bool                                                 // write the XML declaration the document was read with
+	minimalEscape        bool                                                 // escape only what XML requires
 	comments             *XMLComments                                         // those comments, by position; nil unless keepComments and the document had some
 	commentsWritten      int                                                  // how many found their position, so an unplaced one is reported rather than lost
 }
@@ -132,6 +152,8 @@ func NewEncoder(resource ecore.EResource, w io.Writer, options map[string]any) *
 		s.keepRequired, _ = options[OPTION_KEEP_REQUIRED_DEFAULTS].(bool)
 		s.denseDefaultField, _ = options[OPTION_DENSE_DEFAULT_FIELDS].(func(ecore.EObject, ecore.EStructuralFeature) bool)
 		s.keepComments, _ = options[OPTION_KEEP_COMMENTS].(bool)
+		s.keepDeclaration, _ = options[OPTION_KEEP_XML_DECLARATION].(bool)
+		s.minimalEscape, _ = options[OPTION_MINIMAL_ESCAPE].(bool)
 	}
 	if s.extendedMetaData == nil {
 		s.extendedMetaData = NewExtendedMetaData()
@@ -233,7 +255,11 @@ func (s *Encoder) reportUnplacedComments() {
 }
 
 func (s *Encoder) saveHeader() {
-	s.str.add(fmt.Sprintf("<?xml version=\"%v\" encoding=\"%v\"?>", s.xmlVersion, s.encoding))
+	if declaration := XMLDeclaration(s.resource); s.keepDeclaration && declaration != "" {
+		s.str.add(declaration)
+	} else {
+		s.str.add(fmt.Sprintf("<?xml version=\"%v\" encoding=\"%v\"?>", s.xmlVersion, s.encoding))
+	}
 	s.str.addLine()
 }
 
@@ -298,7 +324,7 @@ func (s *Encoder) SaveNamespaces() {
 		if len(prefix) > 0 {
 			attribute += ":" + prefix
 		}
-		s.str.addAttribute(attribute, escapeAttribute(s.prefixesToURI[prefix]))
+		s.str.addAttribute(attribute, s.escapeAttribute(s.prefixesToURI[prefix]))
 	}
 	// Authoring form declares the schema via xsi:noNamespaceSchemaLocation rather
 	// than a default namespace; emit it (declaring xmlns:xsi if nothing else did).
@@ -311,14 +337,14 @@ func (s *Encoder) SaveNamespaces() {
 		if _, ok := s.prefixesToURI["xsi"]; !ok {
 			s.str.addAttribute("xmlns:xsi", "http://www.w3.org/2001/XMLSchema-instance")
 		}
-		s.str.addAttribute("xsi:schemaLocation", escapeAttribute(s.xsiSchemaLocation))
+		s.str.addAttribute("xsi:schemaLocation", s.escapeAttribute(s.xsiSchemaLocation))
 	}
 }
 
 func (s *Encoder) saveElementID(eObject ecore.EObject) {
 	if idManager := s.resource.GetObjectIDManager(); len(s.idAttributeName) > 0 && idManager != nil {
 		if id := idManager.GetID(eObject); id != nil {
-			s.str.addAttribute(s.idAttributeName, escapeAttribute(fmt.Sprintf("%v", id)))
+			s.str.addAttribute(s.idAttributeName, s.escapeAttribute(fmt.Sprintf("%v", id)))
 		}
 	}
 }
@@ -529,7 +555,7 @@ func (s *Encoder) saveDataTypeSingle(eObject ecore.EObject, eFeature ecore.EStru
 	val := eObject.EGetResolve(eFeature, false)
 	str, ok := s.getDataType(val, eFeature, true)
 	if ok {
-		s.str.addAttribute(s.getFeatureQName(eFeature), escapeAttribute(str))
+		s.str.addAttribute(s.getFeatureQName(eFeature), s.escapeAttribute(str))
 	}
 }
 
@@ -538,7 +564,7 @@ func (s *Encoder) saveDataTypeElementSingle(eObject ecore.EObject, eFeature ecor
 	val := eObject.EGetResolve(eFeature, false)
 	str, ok := s.getDataType(val, eFeature, true)
 	if ok {
-		s.str.addContent(s.getFeatureQName(eFeature), escapeContent(str))
+		s.str.addContent(s.getFeatureQName(eFeature), s.escapeContent(str))
 	}
 }
 
@@ -547,7 +573,7 @@ func (s *Encoder) saveDataTypeContent(eObject ecore.EObject, eFeature ecore.EStr
 	val := eObject.EGetResolve(eFeature, false)
 	str, ok := s.getDataType(val, eFeature, true)
 	if ok {
-		s.str.addContentValue(escapeContent(str))
+		s.str.addContentValue(s.escapeContent(str))
 	}
 }
 
@@ -567,7 +593,7 @@ func (s *Encoder) saveDataTypeMany(eObject ecore.EObject, eFeature ecore.EStruct
 			s.prefixesToURI[xsiNS] = xsiURI
 		} else {
 			str := convertToString(f, d, value)
-			s.str.addContent(name, escapeContent(str))
+			s.str.addContent(name, s.escapeContent(str))
 		}
 	}
 }
@@ -587,7 +613,7 @@ func (s *Encoder) saveProvidedFeatureValue(eObject ecore.EObject, eFeature ecore
 	if v == "" {
 		return false
 	}
-	s.str.addAttribute(s.getFeatureQName(eFeature), escapeAttribute(v))
+	s.str.addAttribute(s.getFeatureQName(eFeature), s.escapeAttribute(v))
 	return true
 }
 
@@ -595,7 +621,7 @@ func (s *Encoder) saveEObjectSingle(eObject ecore.EObject, eFeature ecore.EStruc
 	value, _ := eObject.EGetResolve(eFeature, false).(ecore.EObject)
 	if value != nil {
 		id := s.getHRef(value)
-		s.str.addAttribute(s.getFeatureQName(eFeature), escapeAttribute(id))
+		s.str.addAttribute(s.getFeatureQName(eFeature), s.escapeAttribute(id))
 	}
 }
 
@@ -675,7 +701,7 @@ func (s *Encoder) saveHRef(eObject ecore.EObject, eFeature ecore.EStructuralFeat
 		if eType != eClass && eType != nil && eType.IsAbstract() {
 			s.saveTypeAttribute(eClass)
 		}
-		s.str.addAttribute("href", escapeAttribute(href))
+		s.str.addAttribute("href", s.escapeAttribute(href))
 		s.str.endEmptyElement()
 	}
 }
@@ -686,7 +712,7 @@ func (s *Encoder) saveEncodedHRefSingle(eObject ecore.EObject, eFeature ecore.ES
 	value, _ := eObject.EGetResolve(eFeature, false).(ecore.EObject)
 	if value != nil {
 		if href := s.getEncodedHRef(value, eFeature); href != "" {
-			s.str.addAttribute(s.getFeatureQName(eFeature), escapeAttribute(href))
+			s.str.addAttribute(s.getFeatureQName(eFeature), s.escapeAttribute(href))
 		}
 	}
 }
@@ -716,7 +742,7 @@ func (s *Encoder) saveIDRefSingle(eObject ecore.EObject, eFeature ecore.EStructu
 	if value != nil {
 		id := s.getIDRef(value)
 		if id != "" {
-			s.str.addAttribute(s.getFeatureQName(eFeature), escapeAttribute(id))
+			s.str.addAttribute(s.getFeatureQName(eFeature), s.escapeAttribute(id))
 		}
 	}
 }
@@ -745,7 +771,7 @@ func (s *Encoder) saveRefsAttribute(eObject ecore.EObject, eFeature ecore.EStruc
 		buffer.WriteString(id)
 	}
 	if buffer.Len() > 0 {
-		s.str.addAttribute(s.getFeatureQName(eFeature), escapeAttribute(buffer.String()))
+		s.str.addAttribute(s.getFeatureQName(eFeature), s.escapeAttribute(buffer.String()))
 	}
 }
 
