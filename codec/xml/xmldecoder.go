@@ -1126,7 +1126,11 @@ func (l *Decoder) procInst(param, s string) string {
 	return v[1 : idx+1]
 }
 
+// directive keeps the document type declaration of the document, read before its root.
 func (l *Decoder) directive(directive string) {
+	if len(l.objects) == 0 && l.resource.GetContents().Empty() && strings.HasPrefix(directive, "DOCTYPE") {
+		SetXMLDocumentType(l.resource, "<!"+directive+">")
+	}
 }
 
 // SetObjectID gives id to eObject, an object of the document: the references of the document

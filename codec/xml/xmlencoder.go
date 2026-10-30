@@ -261,6 +261,10 @@ func (s *Encoder) saveHeader() {
 		s.str.add(fmt.Sprintf("<?xml version=\"%v\" encoding=\"%v\"?>", s.xmlVersion, s.encoding))
 	}
 	s.str.addLine()
+	if doctype := XMLDocumentType(s.resource); s.keepDeclaration && doctype != "" {
+		s.str.add(doctype)
+		s.str.addLine()
+	}
 }
 
 func (s *Encoder) saveTopObject(eObject ecore.EObject) {

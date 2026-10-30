@@ -59,6 +59,25 @@ func TestXMLDeclaration_IsWrittenBackAsItWasRead(t *testing.T) {
 	}
 }
 
+// The document type declaration a document was read with, <!DOCTYPE TS> of a Qt Linguist file,
+// is written back after its XML declaration.
+func TestXMLDocumentType_IsWrittenBackAfterTheDeclaration(t *testing.T) {
+	ePackage, _, _, _ := escapePackage()
+	eResourceSet := ecore.NewEResourceSetImpl()
+	eResourceSet.GetPackageRegistry().RegisterPackage(ePackage)
+	prolog := `<?xml version="1.0" encoding="utf-8"?>` + "\n<!DOCTYPE TS>\n"
+	eResource := eResourceSet.CreateResource(ecore.NewURI("file:///doctype.xml"))
+	NewDecoder(eResource, strings.NewReader(prolog+"<p:C xmlns:p=\"http://p\" single=\"v\"/>\n"), nil).DecodeResource()
+	require.True(t, eResource.GetErrors().Empty())
+	require.Equal(t, "<!DOCTYPE TS>", XMLDocumentType(eResource))
+	var kept bytes.Buffer
+	NewEncoder(eResource, &kept, map[string]any{OPTION_KEEP_XML_DECLARATION: true}).EncodeResource()
+	assert.True(t, strings.HasPrefix(kept.String(), prolog), kept.String())
+
+	SetXMLDocumentType(eResource, "<?xml not a doctype?>")
+	assert.Equal(t, "<!DOCTYPE TS>", XMLDocumentType(eResource))
+}
+
 // A document held elsewhere than in its file is given its declaration back; what is not a
 // declaration is not taken for one.
 func TestXMLDeclaration_IsGivenToADocumentNotReadFromXML(t *testing.T) {
