@@ -15,13 +15,40 @@ import (
 	"github.com/masagroup/soft.go/ecore"
 )
 
-// The XML declaration of a document, <?xml version="1.0" encoding="UTF-8" standalone="no" ?>, is
-// not a value of its model either: its writer chose it, and two writers of one format do not choose
-// alike. Like the comments (XMLComments), the decoder keeps it on the resource as it was written,
-// and the encoder writes it back when asked (OPTION_KEEP_XML_DECLARATION).
+// The XML declaration of a document, <?xml version="1.0" encoding="UTF-8" standalone="no" ?>, and
+// its document type declaration, <!DOCTYPE TS>, are not values of its model either: its writer
+// chose them, and two writers of one format do not choose alike. Like the comments (XMLComments),
+// the decoder keeps them on the resource as they were written, and the encoder writes them back
+// when asked (OPTION_KEEP_XML_DECLARATION).
 
-// declarationKey is the key of a document's XML declaration in its resource's codec data.
-type declarationKey struct{}
+// declarationKey and doctypeKey are the keys of a document's XML declaration and document type
+// declaration in its resource's codec data.
+type (
+	declarationKey struct{}
+	doctypeKey     struct{}
+)
+
+// XMLDocumentType returns the document type declaration the document of resource was read with,
+// <!DOCTYPE ...> as it was written, "" when it had none or was not read from XML.
+func XMLDocumentType(resource ecore.EResource) string {
+	carrier, _ := resource.(codecDataCarrier)
+	if carrier == nil {
+		return ""
+	}
+	doctype, _ := carrier.GetCodecData(doctypeKey{}).(string)
+	return doctype
+}
+
+// SetXMLDocumentType gives resource the document type declaration its document is written with
+// under OPTION_KEEP_XML_DECLARATION. A value that is not a document type declaration is ignored.
+func SetXMLDocumentType(resource ecore.EResource, doctype string) {
+	if !strings.HasPrefix(doctype, "<!DOCTYPE") || !strings.HasSuffix(doctype, ">") {
+		return
+	}
+	if carrier, _ := resource.(codecDataCarrier); carrier != nil {
+		carrier.SetCodecData(doctypeKey{}, doctype)
+	}
+}
 
 // XMLDeclaration returns the XML declaration the document of resource was read with, as it was
 // written, "" when it had none or was not read from XML.
