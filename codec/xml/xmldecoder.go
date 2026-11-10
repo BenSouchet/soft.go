@@ -1132,6 +1132,7 @@ func (l *Decoder) publishComments() {
 func (l *Decoder) processingInstruction(procInst xml.ProcInst) {
 	if procInst.Target == "xml" {
 		content := string(procInst.Inst)
+		SetXMLDeclaration(l.resource, "<?xml "+content+"?>")
 		if ver := l.procInst("version", content); ver != "" {
 			l.xmlVersion = ver
 		}
@@ -1167,6 +1168,7 @@ func (l *Decoder) procInst(param, s string) string {
 func (l *Decoder) directive(directive string) {
 	if len(l.objects) == 0 && l.documentType == "" && strings.HasPrefix(directive, "DOCTYPE") {
 		l.documentType = "<!" + directive + ">"
+		SetXMLDocumentType(l.resource, l.documentType)
 	}
 }
 

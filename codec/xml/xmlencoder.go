@@ -94,6 +94,7 @@ type Encoder struct {
 	suppressDefaultNS    bool                                                 // omit the default xmlns on the root
 	featureValueProvider func(ecore.EObject, ecore.EStructuralFeature) string // a reference written as a verbatim value (a name)
 	keepComments         bool                                                 // write back the comments the resource's document carried
+	keepDeclaration      bool                                                 // write the XML declaration and document type the document was read with
 	comments             *XMLComments                                         // those comments, by position; nil unless keepComments and the document had some
 	commentsWritten      int                                                  // how many found their position, so an unplaced one is reported rather than lost
 }
@@ -143,6 +144,16 @@ func NewEncoder(resource ecore.EResource, w io.Writer, options map[string]any) *
 		s.featureValueProvider, _ = options[OPTION_FEATURE_VALUE_PROVIDER].(func(ecore.EObject, ecore.EStructuralFeature) string)
 		s.keepRequired, _ = options[OPTION_KEEP_REQUIRED_DEFAULTS].(bool)
 		s.keepComments, _ = options[OPTION_KEEP_COMMENTS].(bool)
+		s.keepDeclaration, _ = options[OPTION_KEEP_XML_DECLARATION].(bool)
+	}
+	// A declaration written back is written in the encoding it names, unless an encoding is asked.
+	if s.keepDeclaration {
+		if encoding := declarationEncoding(XMLDeclaration(resource)); encoding != "" && options[OPTION_ENCODING] == nil {
+			s.encoding = encoding
+		}
+		if s.documentType == "" {
+			s.documentType = XMLDocumentType(resource)
+		}
 	}
 	if s.extendedMetaData == nil {
 		s.extendedMetaData = NewExtendedMetaData()
@@ -257,7 +268,11 @@ func (s *Encoder) reportUnplacedComments() {
 }
 
 func (s *Encoder) saveHeader() {
-	s.str.add(fmt.Sprintf("<?xml version=\"%v\" encoding=\"%v\"?>", s.xmlVersion, s.encoding))
+	if declaration := XMLDeclaration(s.resource); s.keepDeclaration && declaration != "" {
+		s.str.add(declaration)
+	} else {
+		s.str.add(fmt.Sprintf("<?xml version=\"%v\" encoding=\"%v\"?>", s.xmlVersion, s.encoding))
+	}
 	s.str.addLine()
 	if s.documentType != "" {
 		s.str.add(s.documentType)
